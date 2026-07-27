@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "三元相图 · 3D 教学实验室",
+  title: "材科基 · 三元相图3D可视化实验室",
   description:
     "面向材料科学教学的三元相图 3D 交互可视化平台，支持等温切片、爆炸视图、相区高亮与成分点分析。",
   icons: {

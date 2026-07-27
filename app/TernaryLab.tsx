@@ -50,13 +50,13 @@ const MODEL_META: Record<
   },
   eutectic: {
     short: "不互溶共晶",
-    title: "固态完全不互溶三元共晶",
+    title: "固态不互溶的三元共晶相图",
     subtitle: "No Solid Solubility",
     note: "液相面向三元共晶点收敛，低温三相区形成清晰的水平反应层。",
   },
   limited: {
     short: "有限互溶共晶",
-    title: "固态有限互溶三元共晶",
+    title: "固态有限互溶的三元共晶相图",
     subtitle: "Limited Solid Solubility",
     note: "在共晶骨架上加入固态溶解度边界，比较 α + β 两相区的空间变化。",
   },
@@ -766,43 +766,41 @@ export default function TernaryLab() {
       <header className="topbar">
         <div className="brand-block">
           <div className="brand-mark" aria-hidden="true">
-            △
+            <img src="favicon.svg" alt="" />
           </div>
           <div>
-            <div className="eyebrow">MATERIALS SCIENCE · 3D LAB</div>
-            <h1>三元相图教学可视化平台</h1>
+            <h1>材科基 · 三元相图3D可视化实验室</h1>
+            <div className="brand-subtitle">Materials Fundamentals Ternary Phase Lab</div>
           </div>
-        </div>
-
-        <nav className="model-switcher" aria-label="相图模型选择">
-          {(Object.keys(MODEL_META) as ModelKey[]).map((key, index) => (
-            <button
-              key={key}
-              className={model === key ? "model-button active" : "model-button"}
-              onClick={() => setModel(key)}
-              aria-pressed={model === key}
-            >
-              <span>0{index + 1}</span>
-              {MODEL_META[key].short}
-            </button>
-          ))}
-        </nav>
-
-        <div className="top-status">
-          <span className="live-dot" />
-          WebGL 实时渲染
         </div>
       </header>
 
       <section className="workspace">
-        <aside className="panel control-panel">
-          <div className="panel-heading">
-            <div>
-              <span className="section-index">CONTROL / 01</span>
+        <aside className="left-rail panel-stack">
+          <section className="panel phase-selection-panel">
+            <div className="panel-heading simple-heading">
+              <h2>相图类型</h2>
+            </div>
+            <div className="phase-option-list" role="group" aria-label="相图类型">
+              {(Object.keys(MODEL_META) as ModelKey[]).map((key) => (
+                <button
+                  type="button"
+                  key={key}
+                  className={model === key ? "phase-option active" : "phase-option"}
+                  onClick={() => setModel(key)}
+                  aria-pressed={model === key}
+                >
+                  <span className="phase-option-icon" aria-hidden="true">△</span>
+                  <span>{MODEL_META[key].title}</span>
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <section className="panel control-panel">
+            <div className="panel-heading simple-heading">
               <h2>教学控制台</h2>
             </div>
-            <span className="shortcut">交互模式</span>
-          </div>
 
           <div className="control-section">
             <div className="control-label">
@@ -924,13 +922,18 @@ export default function TernaryLab() {
               </div>
             )}
           </div>
+          </section>
         </aside>
 
         <section className="viewport" aria-label="三元相图三维交互视图">
           <div className="viewport-title">
-            <span className="section-index">ACTIVE MODEL</span>
-            <h2>{meta.title}</h2>
-            <p>{meta.subtitle}</p>
+            <div className="viewport-title-row">
+              <img src="favicon.svg" alt="" />
+              <div>
+                <h2>{meta.title}</h2>
+                <p>{meta.subtitle}</p>
+              </div>
+            </div>
           </div>
 
           <div className="view-badge">
@@ -982,24 +985,21 @@ export default function TernaryLab() {
           </div>
         </section>
 
-        <aside className="panel info-panel">
-          <div className="status-card">
-            <span className="section-index">CURRENT STATE</span>
+        <aside className="right-rail panel-stack info-panel">
+          <section className="panel status-panel">
+            <div className="card-title">当前温度状态</div>
+            <div className="status-card">
             <div className="status-icon" aria-hidden="true">
               ◇
             </div>
-            <small>当前温度状态</small>
+            <small>当前相区判断</small>
             <strong>{selectedPhase ?? sliceStatus.title}</strong>
             <p>{selectedPhase ? "已选中相区，点击空白处可取消高亮。" : sliceStatus.detail}</p>
-          </div>
-
-          <div className="filter-section">
-            <div className="panel-heading compact">
-              <div>
-                <span className="section-index">VISIBILITY / 02</span>
-                <h2>相区可见性</h2>
-              </div>
             </div>
+          </section>
+
+          <section className="panel filter-section">
+            <div className="card-title">相区可见性选择</div>
             <div className="filter-list">
               {(Object.keys(CATEGORY_LABELS) as PhaseCategory[]).map((category) => (
                 <label key={category} className="filter-row">
@@ -1028,38 +1028,19 @@ export default function TernaryLab() {
                 </label>
               ))}
             </div>
-          </div>
+          </section>
 
-          <div className="teaching-note">
-            <span className="note-number">03</span>
-            <div>
-              <small>教学提示</small>
-              <p>{meta.note}</p>
-            </div>
-          </div>
+          <section className="panel teaching-note">
+            <div className="card-title">教学解析</div>
+            <p>{meta.note}</p>
+          </section>
 
-          <button className="reset-button" onClick={resetView}>
-            <span aria-hidden="true">↻</span>
-            重置视角与状态
-          </button>
-
-          <div className="render-spec">
-            <span>RENDER SPEC</span>
-            <dl>
-              <div>
-                <dt>Mesh</dt>
-                <dd>{model === "isomorphous" ? "3" : model === "eutectic" ? "4" : "5"} layers</dd>
-              </div>
-              <div>
-                <dt>Material</dt>
-                <dd>Phong glass</dd>
-              </div>
-              <div>
-                <dt>Slice</dt>
-                <dd>{temperature}%</dd>
-              </div>
-            </dl>
-          </div>
+          <section className="panel reset-panel">
+            <button className="reset-button" onClick={resetView}>
+              <span aria-hidden="true">↻</span>
+              重置视角与状态
+            </button>
+          </section>
         </aside>
       </section>
     </main>
