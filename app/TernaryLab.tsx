@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { brandLogo } from "./brandLogo";
 
 type ModelKey = "isomorphous" | "eutectic" | "limited";
 type PhaseCategory = "single" | "two" | "three";
@@ -766,7 +767,7 @@ export default function TernaryLab() {
       <header className="topbar">
         <div className="brand-block">
           <div className="brand-mark" aria-hidden="true">
-            <img src="favicon.svg" alt="" />
+            <img src={brandLogo} alt="" />
           </div>
           <div>
             <h1>材科基 · 三元相图3D可视化实验室</h1>
@@ -928,7 +929,7 @@ export default function TernaryLab() {
         <section className="viewport" aria-label="三元相图三维交互视图">
           <div className="viewport-title">
             <div className="viewport-title-row">
-              <img src="favicon.svg" alt="" />
+              <img src={brandLogo} alt="" />
               <div>
                 <h2>{meta.title}</h2>
                 <p>{meta.subtitle}</p>
