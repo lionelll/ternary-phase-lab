@@ -16,7 +16,7 @@
 
 The normalized source and browser-rendered implementation were placed side by side in the same comparison image. The surrounding header, three-column layout, panel hierarchy, copy, selection state, dark surfaces, and spacing remain consistent because this iteration intentionally changes only the central WebGL scene.
 
-The implementation now carries the selected direction's primary visual language: three independent opaque sculptural masses, dark physical separation seams, rounded perimeter transitions, blue/teal/copper material hierarchy, a black stage, controlled white/cyan/warm lighting, and a thin reference cage with spatial vertex nodes.
+The implementation now carries the selected direction's primary visual language while following the PRD teaching requirement: independent translucent sculptural masses, bright solid phase boundaries, rounded perimeter transitions, blue/teal/copper material hierarchy, a black stage, controlled white/cyan/warm lighting, and a thin reference cage with spatial vertex nodes.
 
 ## Focused region comparison evidence
 
@@ -42,7 +42,7 @@ The source mock exaggerates the liquidus silhouette into a deeper front-edge cur
 - Fonts and typography: unchanged from the approved existing page. Family, Chinese fallbacks, hierarchy, weight, wrapping, and small-label density remain stable.
 - Spacing and layout rhythm: header, rails, central viewport, panel gaps, radii, borders, and overlay placement are unchanged. The new camera gives the sculpture balanced negative space without colliding with the title, labels, legend, or hints.
 - Colors and visual tokens: solid bodies use calibrated dark cobalt, teal, and copper; near-black stage and pale-blue cage match the selected direction. Broad neon bloom and decorative fog are absent.
-- Image quality and asset fidelity: the central visual is real Three.js geometry, not a raster substitute, CSS drawing, placeholder, or custom SVG. Forty-six surface segments plus eight side-wall bevel steps keep silhouettes smooth. SMAA, SSAO, PMREM lighting, shadow mapping, and polygon offset are used without visible Z-fighting in the tested state.
+- Image quality and asset fidelity: the central visual is real Three.js geometry, not a raster substitute, CSS drawing, placeholder, or custom SVG. Forty-six surface segments plus eight side-wall bevel steps keep silhouettes smooth. MeshPhong materials, SMAA/SSAO high-quality passes, adaptive shadow mapping, and polygon offset are used without visible Z-fighting in the tested state.
 - Copy and content: no requested product copy was changed. The three phase-model names, teaching controls, status, visibility filters, reset action, and teaching analysis remain intact.
 - Icons: existing brand asset and interface icon treatment are unchanged. Reference-cage nodes are native 3D scene geometry and support spatial reading.
 - Accessibility: semantic buttons, pressed states, labelled range input, numeric inputs, checkboxes, disabled clear state, and visible focus styling remain present. No new DOM-only decoration was introduced for the 3D visual.
@@ -50,11 +50,11 @@ The source mock exaggerates the liquidus silhouette into a deeper front-edge cur
 
 ## Comparison history
 
-### Iteration 0 — blocked, then fixed
+### Iteration 0 — superseded by PRD P0 correction
 
 - [P1] Default transparency made the phase bodies read as flat overlapping sheets.
-- Fix: changed the default bodies to opaque depth-writing MeshPhysical materials, preserved transparent dimming only for selection states, and added calibrated clearcoat/specular response.
-- Post-fix evidence: `/private/tmp/ternary-style-audit/11-option2-impl-desktop.png`.
+- Earlier visual-only fix: changed the bodies to opaque MeshPhysical materials.
+- Final PRD decision: restored `0.32` default transparency, `0.85` selected opacity and `0.05` dimming, strengthened solid phase boundaries, and switched to cheaper MeshPhong materials so internal phase interfaces remain teachable without returning to a flat-sheet appearance.
 
 ### Iteration 1 — blocked, then fixed
 
@@ -134,7 +134,7 @@ These values match the crystal-structure source rules exactly. The embedded tern
 - Reused the crystal page's exact home icon path in a ternary-owned icon component.
 - Removed all English subtitles beneath the three phase-diagram titles.
 - Removed the right-rail “重置视角与状态” panel.
-- Kept the top action as “重置视角” and limited it to camera reset only.
+- Kept the top action as “重置视角”; it now resets camera plus the coupled teaching state (explosion, clipping, probe/highlight and visibility) so React and Three.js cannot diverge.
 
 ## Required fidelity surfaces
 
@@ -147,7 +147,7 @@ These values match the crystal-structure source rules exactly. The embedded tern
 ## Verification
 
 - Static production build: passed under Node `24.18.1`.
-- Phase geometry tests: `4/4` passed.
+- Phase geometry tests: `5/5` passed, including composition-aware three-phase labels.
 - Targeted source ESLint: passed with `0` errors.
 - Reset action: exactly one accessible “重置视角” button; click completed successfully.
 - Browser console after reload and reset click: no errors or warnings.

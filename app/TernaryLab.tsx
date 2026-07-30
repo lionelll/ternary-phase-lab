@@ -7,11 +7,13 @@ import {
   type ModelKey,
   type PhaseCategory,
   type PhaseResult,
+  layersFor,
   phaseAt,
   positionFromComposition,
 } from "./three/phaseGeometry";
 import {
   type PhaseSceneController,
+  type VertexLabelPositions,
   createPhaseScene,
 } from "./three/phaseScene";
 
@@ -48,6 +50,22 @@ const ALL_VISIBLE: Record<PhaseCategory, boolean> = {
   three: true,
 };
 
+const EMPTY_VERTEX_LABELS: VertexLabelPositions = {
+  A: { x: 0, y: 0, visible: false },
+  B: { x: 0, y: 0, visible: false },
+  C: { x: 0, y: 0, visible: false },
+};
+
+function visibilityForModel(model: ModelKey) {
+  return Object.fromEntries(layersFor(model).map((phase) => [phase.id, true]));
+}
+
+function categoryDescription(model: ModelKey, category: PhaseCategory) {
+  const phases = layersFor(model).filter((phase) => phase.category === category);
+  if (phases.length === 0) return "本模型无此类相区";
+  return phases.map((phase) => phase.name.replace(/区$/, "")).join(" / ");
+}
+
 export default function TernaryLab() {
   const canvasHost = useRef<HTMLDivElement>(null);
   const sceneController = useRef<PhaseSceneController | null>(null);
@@ -56,6 +74,11 @@ export default function TernaryLab() {
   const [temperature, setTemperature] = useState(100);
   const [exploded, setExploded] = useState(false);
   const [filters, setFilters] = useState<Record<PhaseCategory, boolean>>(ALL_VISIBLE);
+  const [phaseVisibility, setPhaseVisibility] = useState<Record<string, boolean>>(
+    () => visibilityForModel("isomorphous"),
+  );
+  const [vertexLabels, setVertexLabels] =
+    useState<VertexLabelPositions>(EMPTY_VERTEX_LABELS);
   const [selectedPhase, setSelectedPhase] = useState<string | null>(null);
   const [composition, setComposition] = useState({ a: 30, b: 40, t: 50 });
   const [analysis, setAnalysis] = useState<
@@ -65,8 +88,9 @@ export default function TernaryLab() {
   >(null);
 
   const meta = MODEL_META[model];
+  const phaseSpecs = useMemo(() => layersFor(model), [model]);
   const sliceStatus = useMemo(
-    () => phaseAt(model, 33.33, 33.33, temperature),
+    () => phaseAt(model, 100 / 3, 100 / 3, temperature),
     [model, temperature],
   );
 
@@ -79,9 +103,11 @@ export default function TernaryLab() {
       onPhaseSelect(selection) {
         setSelectedPhase(selection?.name ?? null);
       },
+      onVertexLabels: setVertexLabels,
     });
     sceneController.current = controller;
     controller.setFilters(ALL_VISIBLE);
+    controller.setPhaseVisibility(visibilityForModel("isomorphous"));
     controller.setTemperature(100, false);
     return () => {
       controller.dispose();
@@ -101,6 +127,10 @@ export default function TernaryLab() {
     sceneController.current?.setFilters(filters);
   }, [filters]);
 
+  useEffect(() => {
+    sceneController.current?.setPhaseVisibility(phaseVisibility);
+  }, [phaseVisibility]);
+
   function applyHighlight(phaseId: string | null) {
     sceneController.current?.setHighlight(phaseId);
   }
@@ -110,12 +140,15 @@ export default function TernaryLab() {
     const controller = sceneController.current;
     controller?.rebuild(nextModel);
     controller?.setFilters(filters);
+    const nextVisibility = visibilityForModel(nextModel);
+    controller?.setPhaseVisibility(nextVisibility);
     controller?.setTemperature(temperature, false);
     controller?.setExploded(false, temperature);
     setModel(nextModel);
     setSelectedPhase(null);
     setAnalysis(null);
     setExploded(false);
+    setPhaseVisibility(nextVisibility);
   }
 
   function clearAnalysis() {
@@ -156,9 +189,25 @@ export default function TernaryLab() {
     setAnalysis({ c, phase, a, b, t });
   }
 
-  function resetCamera() {
-    sceneController.current?.resetView();
+  /** 一次性把相机、等温截面、爆炸视图、相区可见性与成分点分析全部恢复到初始状态。 */
+  function resetAll() {
+    const nextFilters = { ...ALL_VISIBLE };
+    const nextVisibility = visibilityForModel(model);
+    const controller = sceneController.current;
+    controller?.resetView();
+    controller?.setTemperature(100, false);
+    controller?.setExploded(false, 100);
+    controller?.setFilters(nextFilters);
+    controller?.setPhaseVisibility(nextVisibility);
+    setTemperature(100);
+    setExploded(false);
+    setFilters(nextFilters);
+    setPhaseVisibility(nextVisibility);
+    setAnalysis(null);
+    setSelectedPhase(null);
   }
+
+  const computedC = 100 - composition.a - composition.b;
 
   return (
     <main className="lab-shell">
@@ -173,9 +222,14 @@ export default function TernaryLab() {
           </div>
         </div>
         <div className="top-actions">
-          <button className="top-action-button" type="button" onClick={resetCamera}>
+          <button
+            className="top-action-button"
+            type="button"
+            onClick={resetAll}
+            title="恢复相机视角、等温截面、爆炸视图与相区可见性"
+          >
             <HomeIcon />
-            <span>重置视角</span>
+            <span>重置全部</span>
           </button>
         </div>
       </header>
@@ -235,8 +289,10 @@ export default function TernaryLab() {
             </div>
 
             <button
+              type="button"
               className={exploded ? "explode-button active" : "explode-button"}
               onClick={() => setExploded((value) => !value)}
+              aria-pressed={exploded}
             >
               <span className="button-icon" aria-hidden="true">↕</span>
               <span>
@@ -248,7 +304,7 @@ export default function TernaryLab() {
 
             <div className="divider" />
 
-            <div className="control-section composition-section">
+            <div className="control-section">
               <div className="control-label">
                 <div>
                   <span className="accent-line green" />
@@ -279,17 +335,24 @@ export default function TernaryLab() {
 
               <div className="computed-row">
                 <span>自动计算 C</span>
-                <strong>{Math.max(0, 100 - composition.a - composition.b).toFixed(1)}%</strong>
+                <strong className={computedC < 0 ? "invalid-value" : undefined}>
+                  {computedC < 0 ? "无效（A + B > 100%）" : `${computedC.toFixed(1)}%`}
+                </strong>
               </div>
 
               <div className="button-row">
-                <button className="primary-button" onClick={plotComposition}>
+                <button
+                  type="button"
+                  className="primary-button"
+                  onClick={plotComposition}
+                >
                   <span aria-hidden="true">＋</span> 生成探测点
                 </button>
                 <button
+                  type="button"
                   className="ghost-button"
                   onClick={clearAnalysis}
-                  disabled={!analysis}
+                  disabled={!analysis && !selectedPhase}
                 >
                   清除
                 </button>
@@ -345,9 +408,19 @@ export default function TernaryLab() {
 
           <div ref={canvasHost} className="canvas-host" />
 
-          <div className="axis-label label-a">A</div>
-          <div className="axis-label label-b">B</div>
-          <div className="axis-label label-c">C</div>
+          {(["A", "B", "C"] as const).map((label) => (
+            <div
+              key={label}
+              className="axis-label"
+              style={{
+                left: vertexLabels[label].x,
+                top: vertexLabels[label].y,
+                opacity: vertexLabels[label].visible ? 1 : 0,
+              }}
+            >
+              {label}
+            </div>
+          ))}
           <div className="temperature-axis">
             <span>温度</span>
             <i />
@@ -376,12 +449,12 @@ export default function TernaryLab() {
             <div className="card-title">当前温度状态</div>
             <div className="status-card">
               <div className="status-icon" aria-hidden="true">◇</div>
-              <small>当前相区判断</small>
+              <small>{selectedPhase ? "已选中相区" : "中心成分当前温度"}</small>
               <strong>{selectedPhase ?? sliceStatus.title}</strong>
               <p>
                 {selectedPhase
                   ? "已选中相区，点击空白处可取消高亮。"
-                  : sliceStatus.detail}
+                  : `固定参考 A/B/C = 33.33% · ${sliceStatus.detail}`}
               </p>
             </div>
           </section>
@@ -389,11 +462,13 @@ export default function TernaryLab() {
           <section className="panel filter-section">
             <div className="card-title">相区可见性选择</div>
             <div className="filter-list">
-              {(Object.keys(CATEGORY_LABELS) as PhaseCategory[]).map((category) => (
-                <label key={category} className="filter-row">
+              {(Object.keys(CATEGORY_LABELS) as PhaseCategory[]).map((category) => {
+                const hasCategory = phaseSpecs.some((phase) => phase.category === category);
+                return <label key={category} className="filter-row">
                   <input
                     type="checkbox"
                     checked={filters[category]}
+                    disabled={!hasCategory}
                     onChange={(event) =>
                       setFilters((current) => ({
                         ...current,
@@ -404,17 +479,31 @@ export default function TernaryLab() {
                   <span className={`filter-indicator ${category}`} />
                   <span>
                     <strong>{CATEGORY_LABELS[category]}</strong>
-                    <small>
-                      {category === "single"
-                        ? "Liquid / α / β / γ"
-                        : category === "two"
-                          ? "L + α / α + β"
-                          : "L + α + β"}
-                    </small>
+                    <small>{categoryDescription(model, category)}</small>
                   </span>
-                  <b>{filters[category] ? "显示" : "隐藏"}</b>
-                </label>
-              ))}
+                  <b>{hasCategory ? (filters[category] ? "显示" : "隐藏") : "—"}</b>
+                </label>;
+              })}
+              <div className="phase-visibility-heading">单独显示 / 隐藏相区</div>
+              <div className="phase-visibility-list">
+                {phaseSpecs.map((phase) => (
+                  <label key={phase.id} className="phase-visibility-row">
+                    <input
+                      type="checkbox"
+                      checked={phaseVisibility[phase.id] !== false}
+                      disabled={!filters[phase.category]}
+                      onChange={(event) =>
+                        setPhaseVisibility((current) => ({
+                          ...current,
+                          [phase.id]: event.target.checked,
+                        }))
+                      }
+                    />
+                    <span className={`filter-indicator ${phase.category}`} />
+                    <span>{phase.name}</span>
+                  </label>
+                ))}
+              </div>
             </div>
           </section>
 

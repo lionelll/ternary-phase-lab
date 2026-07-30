@@ -40,9 +40,52 @@ test("limited-solubility analysis distinguishes solid solution and solid two-pha
   assert.equal(phaseAt("limited", 30, 40, 8).meshId, "beta-solution");
 
   const solidTwoPhase = phaseAt("limited", 30, 40, 17);
-  assert.equal(solidTwoPhase.title, "固态两相区");
+  assert.equal(solidTwoPhase.title, "α + β 固态两相区");
   assert.equal(solidTwoPhase.meshId, "alpha-beta");
   assert.equal(solidTwoPhase.detail, "α + β");
+});
+
+test("three-phase labels name the solid pair of the composition's own sub-triangle", () => {
+  const alphaBeta = phaseAt("eutectic", 70, 20, 17);
+  const betaGamma = phaseAt("eutectic", 15, 15, 17);
+  const gammaAlpha = phaseAt("eutectic", 45, 5, 17);
+
+  assert.equal(alphaBeta.detail, "Liquid + α + β");
+  assert.equal(alphaBeta.meshId, "eutectic-three-alpha-beta");
+  assert.equal(betaGamma.detail, "Liquid + β + γ");
+  assert.equal(betaGamma.meshId, "eutectic-three-beta-gamma");
+  assert.equal(gammaAlpha.detail, "Liquid + γ + α");
+  assert.equal(gammaAlpha.meshId, "eutectic-three-gamma-alpha");
+});
+
+test("cooling one composition never swaps a solid component in or out", () => {
+  const solids = (detail) => new Set(detail.match(/[αβγ]/g) ?? []);
+
+  for (const model of MODELS) {
+    for (let a = 0; a <= 100; a += 5) {
+      for (let b = 0; b <= 100 - a; b += 5) {
+        let previous = null;
+
+        for (let temperature = 100; temperature >= 0; temperature -= 0.5) {
+          const current = phaseAt(model, a, b, temperature);
+          const currentSolids = solids(current.detail);
+
+          if (previous) {
+            // 降温只允许固相组元增加（析出）或减少（溶解），不允许换成另一种组元。
+            const appeared = [...currentSolids].filter((s) => !previous.solids.has(s));
+            const vanished = [...previous.solids].filter((s) => !currentSolids.has(s));
+            assert.ok(
+              appeared.length === 0 || vanished.length === 0,
+              `${model} A=${a} B=${b}: ${previous.title} (${previous.detail}) → ` +
+                `${current.title} (${current.detail}) 同时换掉了 ${vanished} 并引入了 ${appeared}`,
+            );
+          }
+
+          previous = { solids: currentSolids, title: current.title, detail: current.detail };
+        }
+      }
+    }
+  }
 });
 
 test("eutectic and limited surfaces are ordered and continuous around the center", () => {

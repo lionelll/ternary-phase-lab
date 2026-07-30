@@ -40,6 +40,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Lint
+        run: npm run lint
+
+      # 相图判定的回归测试（含"降温不换固相组元"这条组元守恒不变量）。
+      # 之前 CI 只跑构建，这些测试在任何地方都不会自动执行。
+      - name: Run phase-geometry tests
+        run: npm run test:phase
+
       - name: Build static test package
         run: npm run build:static
 

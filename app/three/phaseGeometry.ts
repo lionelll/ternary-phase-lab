@@ -30,17 +30,28 @@ export type PhaseVisual = {
   category: PhaseCategory;
   explode: ExplodeDirection;
   root: THREE.Group;
-  pickMesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshPhysicalMaterial>;
-  frontMaterial: THREE.MeshPhysicalMaterial;
+  pickMesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshPhongMaterial>;
+  edgeMesh: THREE.LineSegments;
+  frontMaterial: THREE.MeshPhongMaterial;
   edgeMaterial: THREE.LineBasicMaterial;
   baseColor: THREE.Color;
   mutedColor: THREE.Color;
+  /** 几何体包围球中心（局部坐标），用于按相机深度做半透明排序。 */
+  centroid: THREE.Vector3;
   targetY: number;
 };
 
-export const DEFAULT_FRONT_OPACITY = 1;
-export const SELECTED_FRONT_OPACITY = 1;
-export const DIMMED_FRONT_OPACITY = 0.055;
+/**
+ * 半透明相区体的绘制顺序由每帧的相机深度决定（见 phaseScene 的 sortPhaseBodies），
+ * 相界线统一排在所有相区体之后，保证 PRD 要求的"内部相界线清晰可见"。
+ * 这两段区间都必须低于参考框(90)、等温截面(200) 与探测点(1000)。
+ */
+export const PHASE_BODY_RENDER_ORDER_BASE = 0;
+export const PHASE_EDGE_RENDER_ORDER_BASE = 50;
+
+export const DEFAULT_FRONT_OPACITY = 0.32;
+export const SELECTED_FRONT_OPACITY = 0.85;
+export const DIMMED_FRONT_OPACITY = 0.05;
 
 export const L = 18;
 export const A_VERTEX = new THREE.Vector3(-L / 2, 0, (Math.sqrt(3) * L) / 6);
@@ -49,8 +60,8 @@ export const C_VERTEX = new THREE.Vector3(0, 0, (-Math.sqrt(3) * L) / 3);
 export const TOP_Y = 14;
 export const DISPLAY_Y_SCALE = 0.84;
 export const DISPLAY_TOP_Y = TOP_Y * DISPLAY_Y_SCALE;
-export const DEFAULT_CAMERA_POSITION = new THREE.Vector3(20.2, 13.6, 22.8);
-export const DEFAULT_CAMERA_TARGET = new THREE.Vector3(0, 4.5, 0);
+export const DEFAULT_CAMERA_POSITION = new THREE.Vector3(25.2, 16.8, 28.4);
+export const DEFAULT_CAMERA_TARGET = new THREE.Vector3(0, 4.8, 0);
 
 const FULL_DOMAIN: readonly BarycentricPoint[] = [
   [1, 0, 0],
@@ -207,13 +218,34 @@ export function layersFor(model: ModelKey): LayerSpec[] {
         domain: COMPONENT_DOMAINS.gamma,
       },
       {
-        id: "eutectic-three",
+        id: "eutectic-three-alpha-beta",
         name: "L + α + β 三相区",
         category: "three",
         color: 0xf43f5e,
         bottom: solidus,
         top: invariantTop!,
         explode: "center",
+        domain: PAIR_DOMAINS["alpha-beta"],
+      },
+      {
+        id: "eutectic-three-beta-gamma",
+        name: "L + β + γ 三相区",
+        category: "three",
+        color: 0xe83f78,
+        bottom: solidus,
+        top: invariantTop!,
+        explode: "center",
+        domain: PAIR_DOMAINS["beta-gamma"],
+      },
+      {
+        id: "eutectic-three-gamma-alpha",
+        name: "L + γ + α 三相区",
+        category: "three",
+        color: 0xd946a8,
+        bottom: solidus,
+        top: invariantTop!,
+        explode: "center",
+        domain: PAIR_DOMAINS["gamma-alpha"],
       },
       {
         id: "liquid-alpha",
@@ -319,13 +351,34 @@ export function layersFor(model: ModelKey): LayerSpec[] {
       domain: PAIR_DOMAINS["gamma-alpha"],
     },
     {
-      id: "limited-three",
+      id: "limited-three-alpha-beta",
       name: "L + α + β 三相区",
       category: "three",
       color: 0xf43f5e,
       bottom: solidus,
       top: invariantTop!,
       explode: "center",
+      domain: PAIR_DOMAINS["alpha-beta"],
+    },
+    {
+      id: "limited-three-beta-gamma",
+      name: "L + β + γ 三相区",
+      category: "three",
+      color: 0xe83f78,
+      bottom: solidus,
+      top: invariantTop!,
+      explode: "center",
+      domain: PAIR_DOMAINS["beta-gamma"],
+    },
+    {
+      id: "limited-three-gamma-alpha",
+      name: "L + γ + α 三相区",
+      category: "three",
+      color: 0xd946a8,
+      bottom: solidus,
+      top: invariantTop!,
+      explode: "center",
+      domain: PAIR_DOMAINS["gamma-alpha"],
     },
     {
       id: "liquid-alpha",
@@ -600,15 +653,15 @@ function createPhaseBoundaryGeometry(
 
 function materialProfile(spec: LayerSpec) {
   if (spec.id === "liquid") {
-    return { roughness: 0.25, metalness: 0.03, clearcoat: 0.94, clearcoatRoughness: 0.18 };
+    return { shininess: 92, specular: 0xdcefff };
   }
   if (spec.category === "three") {
-    return { roughness: 0.3, metalness: 0.06, clearcoat: 0.82, clearcoatRoughness: 0.2 };
+    return { shininess: 76, specular: 0xffe8ec };
   }
   if (spec.category === "two") {
-    return { roughness: 0.31, metalness: 0.035, clearcoat: 0.84, clearcoatRoughness: 0.21 };
+    return { shininess: 68, specular: 0xd8ffff };
   }
-  return { roughness: 0.4, metalness: 0.16, clearcoat: 0.62, clearcoatRoughness: 0.25 };
+  return { shininess: 48, specular: 0xffe2c7 };
 }
 
 export function createPhaseVisual(
@@ -622,21 +675,16 @@ export function createPhaseVisual(
   const profile = materialProfile(spec);
   const clippingPlanes = [clippingPlane];
 
-  const frontMaterial = new THREE.MeshPhysicalMaterial({
+  const frontMaterial = new THREE.MeshPhongMaterial({
     color: mutedColor,
     emissive: baseColor.clone().multiplyScalar(0.035),
     emissiveIntensity: 0.32,
-    roughness: profile.roughness,
-    metalness: profile.metalness,
-    clearcoat: profile.clearcoat,
-    clearcoatRoughness: profile.clearcoatRoughness,
-    envMapIntensity: 0.78,
-    specularIntensity: 0.88,
-    specularColor: new THREE.Color(0xdcefff),
-    transparent: false,
+    shininess: profile.shininess,
+    specular: profile.specular,
+    transparent: true,
     opacity: DEFAULT_FRONT_OPACITY,
-    side: THREE.FrontSide,
-    depthWrite: true,
+    side: THREE.DoubleSide,
+    depthWrite: false,
     polygonOffset: true,
     polygonOffsetFactor: 1,
     polygonOffsetUnits: 1,
@@ -646,19 +694,21 @@ export function createPhaseVisual(
 
   const frontMesh = new THREE.Mesh(geometry, frontMaterial);
   frontMesh.name = `${spec.id}-surface`;
-  frontMesh.renderOrder = renderIndex * 2;
+  frontMesh.renderOrder = PHASE_BODY_RENDER_ORDER_BASE + renderIndex;
   frontMesh.userData = { id: spec.id, name: spec.name, category: spec.category };
   frontMesh.castShadow = true;
   frontMesh.receiveShadow = true;
 
-  const edgeGeometry =
-    spec.id === "liquid"
-      ? new THREE.BufferGeometry()
-      : createPhaseBoundaryGeometry(46, spec.bottom, spec.top, spec.domain);
+  const edgeGeometry = createPhaseBoundaryGeometry(
+    46,
+    spec.bottom,
+    spec.top,
+    spec.domain,
+  );
   const edgeMaterial = new THREE.LineBasicMaterial({
     color: 0xc9ecff,
     transparent: true,
-    opacity: 0.1,
+    opacity: 0.62,
     depthTest: true,
     depthWrite: false,
     fog: false,
@@ -666,7 +716,7 @@ export function createPhaseVisual(
   });
   const edges = new THREE.LineSegments(edgeGeometry, edgeMaterial);
   edges.name = `${spec.id}-edges`;
-  edges.renderOrder = renderIndex * 2 + 1;
+  edges.renderOrder = PHASE_EDGE_RENDER_ORDER_BASE + renderIndex;
 
   const root = new THREE.Group();
   root.name = `phase-${spec.id}`;
@@ -686,10 +736,12 @@ export function createPhaseVisual(
     explode: spec.explode,
     root,
     pickMesh: frontMesh,
+    edgeMesh: edges,
     frontMaterial,
     edgeMaterial,
     baseColor,
     mutedColor,
+    centroid: (geometry.boundingSphere?.center ?? new THREE.Vector3()).clone(),
     targetY: 0,
   };
 }
@@ -698,24 +750,24 @@ export function setPhaseVisualHighlight(visual: PhaseVisual, selectedId: string 
   if (!selectedId) {
     visual.frontMaterial.color.copy(visual.mutedColor);
     visual.frontMaterial.emissive.copy(visual.baseColor).multiplyScalar(0.035);
-    visual.frontMaterial.transparent = false;
+    visual.frontMaterial.transparent = true;
     visual.frontMaterial.opacity = DEFAULT_FRONT_OPACITY;
-    visual.frontMaterial.depthWrite = true;
+    visual.frontMaterial.depthWrite = false;
     visual.frontMaterial.needsUpdate = true;
     visual.frontMaterial.emissiveIntensity = 0.32;
-    visual.edgeMaterial.opacity = 0.1;
+    visual.edgeMaterial.opacity = 0.62;
     return;
   }
 
   if (visual.id === selectedId) {
     visual.frontMaterial.color.copy(visual.baseColor);
     visual.frontMaterial.emissive.copy(visual.baseColor).multiplyScalar(0.06);
-    visual.frontMaterial.transparent = false;
+    visual.frontMaterial.transparent = true;
     visual.frontMaterial.opacity = SELECTED_FRONT_OPACITY;
     visual.frontMaterial.depthWrite = true;
     visual.frontMaterial.needsUpdate = true;
     visual.frontMaterial.emissiveIntensity = 0.42;
-    visual.edgeMaterial.opacity = 0.42;
+    visual.edgeMaterial.opacity = 0.92;
     return;
   }
 
@@ -726,7 +778,7 @@ export function setPhaseVisualHighlight(visual: PhaseVisual, selectedId: string 
   visual.frontMaterial.depthWrite = false;
   visual.frontMaterial.needsUpdate = true;
   visual.frontMaterial.emissiveIntensity = 0.05;
-  visual.edgeMaterial.opacity = 0.012;
+  visual.edgeMaterial.opacity = 0.06;
 }
 
 export function makeReferenceFrame() {
@@ -819,6 +871,12 @@ function dominantPair(u: number, v: number, w: number) {
   return "gamma-alpha" as const;
 }
 
+const PAIR_LABELS: Record<ReturnType<typeof dominantPair>, string> = {
+  "alpha-beta": "α + β",
+  "beta-gamma": "β + γ",
+  "gamma-alpha": "γ + α",
+};
+
 export function phaseAt(
   model: ModelKey,
   a: number,
@@ -835,12 +893,16 @@ export function phaseAt(
   const high = liquidus(u, v, w);
 
   if (model === "isomorphous") {
-    if (y >= high) return { title: "完全液相", detail: "Liquid", meshId: "liquid" };
-    if (y <= low) return { title: "完全固相", detail: "α", meshId: "alpha-solid" };
-    return { title: "两相共存", detail: "Liquid + α", meshId: "liquid-alpha" };
+    if (y >= high) return { title: "液相区", detail: "Liquid", meshId: "liquid" };
+    if (y <= low) return { title: "α 固相区", detail: "α", meshId: "alpha-solid" };
+    return {
+      title: "液相 + α 两相区",
+      detail: "Liquid + α",
+      meshId: "liquid-alpha",
+    };
   }
 
-  if (y >= high) return { title: "完全液相", detail: "Liquid", meshId: "liquid" };
+  if (y >= high) return { title: "液相区", detail: "Liquid", meshId: "liquid" };
 
   const component = dominantComponent(u, v, w);
   const componentLabel =
@@ -854,12 +916,14 @@ export function phaseAt(
     };
   }
 
+  // 三相区与固态两相区必须用同一套分区判据（dominantPair），否则同一成分降温时
+  // 会出现"L + α + β 三相区"下方接"γ + α 固态两相区"这类组元不守恒的结果。
+  const pair = dominantPair(u, v, w);
+  const pairLabel = PAIR_LABELS[pair];
+
   if (model === "limited" && y <= low) {
-    const pair = dominantPair(u, v, w);
-    const pairLabel =
-      pair === "alpha-beta" ? "α + β" : pair === "beta-gamma" ? "β + γ" : "γ + α";
     return {
-      title: "固态两相区",
+      title: `${pairLabel} 固态两相区`,
       detail: pairLabel,
       meshId: pair,
     };
@@ -876,13 +940,13 @@ export function phaseAt(
   const threePhaseCeiling = invariantTop?.(u, v, w) ?? low;
   if (y <= threePhaseCeiling) {
     return {
-      title: "三相平衡",
-      detail: "Liquid + α + β",
-      meshId: model === "limited" ? "limited-three" : "eutectic-three",
+      title: `L + ${pairLabel} 三相区`,
+      detail: `Liquid + ${pairLabel}`,
+      meshId: `${model === "limited" ? "limited" : "eutectic"}-three-${pair}`,
     };
   }
   return {
-    title: "两相共存",
+    title: `L + ${componentLabel} 两相区`,
     detail: `Liquid + ${componentLabel}`,
     meshId: `liquid-${component}`,
   };

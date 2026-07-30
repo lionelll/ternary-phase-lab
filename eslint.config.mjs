@@ -12,6 +12,12 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // 构建产物：里面是打包压缩后的 three.js，不是本项目源码。
+    // 漏掉这两项会让 `npm run lint` 去检查 bundle 并以 9 个 error 失败。
+    "dist/**",
+    "static-dist/**",
+    ".vinext/**",
+    ".wrangler/**",
   ]),
 ]);
 

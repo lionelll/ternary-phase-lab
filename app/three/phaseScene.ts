@@ -1,5 +1,4 @@
 import * as THREE from "three";
-import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
@@ -9,7 +8,12 @@ import { SSAOPass } from "three/examples/jsm/postprocessing/SSAOPass.js";
 import {
   DEFAULT_CAMERA_POSITION,
   DEFAULT_CAMERA_TARGET,
+  A_VERTEX,
+  B_VERTEX,
+  C_VERTEX,
   DISPLAY_TOP_Y,
+  PHASE_BODY_RENDER_ORDER_BASE,
+  PHASE_EDGE_RENDER_ORDER_BASE,
   type ModelKey,
   type PhaseCategory,
   type PhaseVisual,
@@ -21,23 +25,32 @@ import {
   setPhaseVisualHighlight,
 } from "./phaseGeometry";
 
-export type RenderQuality = "high" | "fallback";
+/**
+ * 渲染质量档位。仅在场景内部使用：帧率采样低于 45fps 时自动降级。
+ * 当前档位会同步写到 canvas 的 `data-render-quality` 属性上，便于排查问题。
+ */
+type RenderQuality = "high" | "fallback";
 
 export type PhaseSelection = {
   id: string;
   name: string;
 };
 
+export type VertexLabelPositions = Record<
+  "A" | "B" | "C",
+  { x: number; y: number; visible: boolean }
+>;
+
 export type PhaseSceneController = {
   rebuild: (model: ModelKey) => void;
   setTemperature: (temperature: number, exploded: boolean) => void;
   setExploded: (exploded: boolean, temperature: number) => void;
   setFilters: (filters: Record<PhaseCategory, boolean>) => void;
+  setPhaseVisibility: (visibility: Record<string, boolean>) => void;
   setHighlight: (phaseId: string | null) => void;
   setPoint: (position: THREE.Vector3) => void;
   clearPoint: () => void;
   resetView: () => void;
-  getQuality: () => RenderQuality;
   dispose: () => void;
 };
 
@@ -45,6 +58,7 @@ type SceneOptions = {
   host: HTMLDivElement;
   initialModel: ModelKey;
   onPhaseSelect: (selection: PhaseSelection | null) => void;
+  onVertexLabels?: (positions: VertexLabelPositions) => void;
 };
 
 function makeSlice() {
@@ -109,17 +123,22 @@ export function createPhaseScene({
   host,
   initialModel,
   onPhaseSelect,
+  onVertexLabels,
 }: SceneOptions): PhaseSceneController {
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x05070c);
 
+  // 舞台底色不在 WebGL 里画，改由 CSS 的 .viewport（#05070C，对齐 crystal-structure-lab
+  // 的 setClearColor(0x05070c)）提供，画布本身保持透明。
+  //
+  // 原因：本场景开了 ACES 色调映射并经 EffectComposer 的 OutputPass 输出，OutputPass 会对
+  // 整幅图像（含背景）做色调映射。#05070C 太暗，ACES 在近黑区会把它压到 rgb(0,0,1)，
+  // 于是画布空白处呈纯黑而不是设定的底色。透明画布让底色绕开色调映射，颜色才精确。
   const renderer = new THREE.WebGLRenderer({
     antialias: true,
-    alpha: false,
-    preserveDrawingBuffer: true,
+    alpha: true,
     powerPreference: "high-performance",
   });
-  renderer.setClearColor(0x05070c, 1);
+  renderer.setClearColor(0x000000, 0);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 0.94;
@@ -136,23 +155,43 @@ export function createPhaseScene({
   controls.enableDamping = true;
   controls.dampingFactor = 0.055;
   controls.target.copy(DEFAULT_CAMERA_TARGET);
-  controls.minDistance = 14;
-  controls.maxDistance = 62;
+  controls.minDistance = 27;
+  controls.maxDistance = 58;
+  controls.minPolarAngle = 0.28;
+  controls.maxPolarAngle = Math.PI / 2 - 0.04;
+  controls.screenSpacePanning = true;
 
-  const pmremGenerator = new THREE.PMREMGenerator(renderer);
-  const roomEnvironment = new RoomEnvironment();
-  const environmentTarget = pmremGenerator.fromScene(roomEnvironment, 0.04);
-  scene.environment = environmentTarget.texture;
-  scene.environmentIntensity = 0.4;
-  roomEnvironment.dispose();
-  pmremGenerator.dispose();
+  // 允许右键平移把视点移出模型中心，但不允许把模型平移到视野之外。
+  // 范围取模型自身尺寸，成分探测点（x/z 最大 ±10.4，y ∈ [0, DISPLAY_TOP_Y]）也落在其中，
+  // 所以视角追踪不会被截断。
+  const TARGET_LIMIT_XZ = 11;
+  const TARGET_LIMIT_Y_MIN = 0;
+  const TARGET_LIMIT_Y_MAX = DISPLAY_TOP_Y + 1;
+
+  function clampTarget() {
+    controls.target.x = THREE.MathUtils.clamp(
+      controls.target.x,
+      -TARGET_LIMIT_XZ,
+      TARGET_LIMIT_XZ,
+    );
+    controls.target.y = THREE.MathUtils.clamp(
+      controls.target.y,
+      TARGET_LIMIT_Y_MIN,
+      TARGET_LIMIT_Y_MAX,
+    );
+    controls.target.z = THREE.MathUtils.clamp(
+      controls.target.z,
+      -TARGET_LIMIT_XZ,
+      TARGET_LIMIT_XZ,
+    );
+  }
 
   scene.add(new THREE.AmbientLight(0x708090, 0.48));
 
   const keyLight = new THREE.DirectionalLight(0xffffff, 1.8);
   keyLight.position.set(15, 28, 19);
   keyLight.castShadow = true;
-  keyLight.shadow.mapSize.set(2048, 2048);
+  keyLight.shadow.mapSize.set(1024, 1024);
   keyLight.shadow.camera.left = -19;
   keyLight.shadow.camera.right = 19;
   keyLight.shadow.camera.top = 21;
@@ -203,8 +242,84 @@ export function createPhaseScene({
   let phaseVisuals: PhaseVisual[] = [];
   let currentTemperature = 100;
   let currentExploded = false;
+  let currentFilters: Record<PhaseCategory, boolean> = {
+    single: true,
+    two: true,
+    three: true,
+  };
+  let currentPhaseVisibility: Record<string, boolean> = {};
   let disposed = false;
   const desiredTarget = DEFAULT_CAMERA_TARGET.clone();
+  // 只有在需要把视角移到新目标时才追踪；追踪完成或用户开始操作相机后立即停止，
+  // 否则每帧的 lerp 会把右键平移的结果拉回原点，等于平移失效。
+  let trackingTarget = false;
+  let lastLabelKey = "";
+
+  function trackTarget(target: THREE.Vector3) {
+    desiredTarget.copy(target);
+    trackingTarget = true;
+  }
+
+  // 相区体是半透明且不写深度的，绘制顺序必须每帧按相机深度从远到近重排。
+  // 写死的下标顺序在同一高度并排的子相区（三相区 α+β/β+γ/γ+α、L+α/L+β/L+γ）之间
+  // 会产生随方位角变化的错误混合。
+  const sortProbe = new THREE.Vector3();
+  const sortBuffer: { visual: PhaseVisual; depth: number }[] = [];
+
+  function sortPhaseBodies() {
+    sortBuffer.length = 0;
+    for (const visual of phaseVisuals) {
+      if (!visual.root.visible) continue;
+      sortProbe.copy(visual.centroid).add(visual.root.position);
+      sortBuffer.push({ visual, depth: sortProbe.distanceToSquared(camera.position) });
+    }
+    sortBuffer.sort((a, b) => b.depth - a.depth);
+    sortBuffer.forEach(({ visual }, index) => {
+      visual.pickMesh.renderOrder = PHASE_BODY_RENDER_ORDER_BASE + index;
+      visual.edgeMesh.renderOrder = PHASE_EDGE_RENDER_ORDER_BASE + index;
+    });
+  }
+
+  controls.addEventListener("start", () => {
+    trackingTarget = false;
+  });
+
+  function emitVertexLabels(force = false) {
+    if (!onVertexLabels) return;
+    const width = Math.max(1, host.clientWidth);
+    const height = Math.max(1, host.clientHeight);
+    const labels = Object.fromEntries(
+      ([
+        ["A", A_VERTEX],
+        ["B", B_VERTEX],
+        ["C", C_VERTEX],
+      ] as const).map(([label, vertex]) => {
+        const projected = vertex.clone().project(camera);
+        const x = (projected.x * 0.5 + 0.5) * width;
+        const y = (-projected.y * 0.5 + 0.5) * height;
+        return [
+          label,
+          {
+            x,
+            y,
+            visible:
+              projected.z >= -1 &&
+              projected.z <= 1 &&
+              x >= 0 &&
+              x <= width &&
+              y >= 0 &&
+              y <= height,
+          },
+        ];
+      }),
+    ) as VertexLabelPositions;
+    const nextKey = Object.values(labels)
+      .map(({ x, y, visible }) => `${Math.round(x * 2)}:${Math.round(y * 2)}:${visible}`)
+      .join("|");
+    if (!force && nextKey === lastLabelKey) return;
+    lastLabelKey = nextKey;
+    onVertexLabels(labels);
+  }
 
   function setRenderSize() {
     const width = Math.max(1, host.clientWidth);
@@ -219,6 +334,7 @@ export function createPhaseScene({
     composer.setSize(width, height);
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
+    emitVertexLabels(true);
   }
 
   function applyQuality(nextQuality: RenderQuality) {
@@ -228,6 +344,16 @@ export function createPhaseScene({
     const highQuality = quality === "high";
     ssaoPass.enabled = highQuality;
     smaaPass.enabled = highQuality;
+    renderer.shadowMap.enabled = highQuality;
+    keyLight.castShadow = highQuality;
+    phaseVisuals.forEach((visual) => {
+      visual.pickMesh.castShadow = highQuality;
+      visual.pickMesh.receiveShadow = highQuality;
+      // 运行时改变 shadowMap.enabled 不会自动重编译已存在的材质，
+      // 必须显式标记，否则降级后阴影相关的 shader 分支仍留在程序里。
+      visual.frontMaterial.needsUpdate = true;
+    });
+    renderer.shadowMap.needsUpdate = true;
     setRenderSize();
   }
 
@@ -250,8 +376,11 @@ export function createPhaseScene({
       phaseGroup.add(visual.root);
       return visual;
     });
+    currentPhaseVisibility = Object.fromEntries(
+      phaseVisuals.map((visual) => [visual.id, true]),
+    );
     probePoint.visible = false;
-    desiredTarget.copy(DEFAULT_CAMERA_TARGET);
+    trackTarget(DEFAULT_CAMERA_TARGET);
     setHighlight(null);
     onPhaseSelect(null);
   }
@@ -283,27 +412,40 @@ export function createPhaseScene({
     });
   }
 
-  function setFilters(filters: Record<PhaseCategory, boolean>) {
+  function applyVisibility() {
     phaseVisuals.forEach((visual) => {
-      visual.root.visible = filters[visual.category];
+      visual.root.visible =
+        currentFilters[visual.category] && currentPhaseVisibility[visual.id] !== false;
     });
+  }
+
+  function setFilters(filters: Record<PhaseCategory, boolean>) {
+    currentFilters = { ...filters };
+    applyVisibility();
+  }
+
+  function setPhaseVisibility(visibility: Record<string, boolean>) {
+    currentPhaseVisibility = { ...visibility };
+    applyVisibility();
   }
 
   function setPoint(position: THREE.Vector3) {
     probePoint.position.copy(position);
     probePoint.visible = true;
-    desiredTarget.copy(position);
+    trackTarget(position);
   }
 
   function clearPoint() {
     probePoint.visible = false;
-    desiredTarget.copy(DEFAULT_CAMERA_TARGET);
+    trackTarget(DEFAULT_CAMERA_TARGET);
   }
 
   function resetView() {
     camera.position.copy(DEFAULT_CAMERA_POSITION);
     controls.target.copy(DEFAULT_CAMERA_TARGET);
     desiredTarget.copy(DEFAULT_CAMERA_TARGET);
+    trackingTarget = false;
+    currentExploded = false;
     probePoint.visible = false;
     phaseVisuals.forEach((visual) => {
       visual.targetY = 0;
@@ -315,6 +457,7 @@ export function createPhaseScene({
     slice.visible = currentTemperature < 100 && !currentExploded;
     setHighlight(null);
     controls.update();
+    emitVertexLabels(true);
   }
 
   rebuild(initialModel);
@@ -371,12 +514,21 @@ export function createPhaseScene({
       visual.root.position.y += (visual.targetY - visual.root.position.y) * 0.09;
     });
 
-    controls.target.lerp(desiredTarget, 0.085);
+    if (trackingTarget) {
+      controls.target.lerp(desiredTarget, 0.085);
+      if (controls.target.distanceToSquared(desiredTarget) < 0.0004) {
+        controls.target.copy(desiredTarget);
+        trackingTarget = false;
+      }
+    }
+    clampTarget();
     if (probePoint.visible) {
       const pulse = 1 + Math.sin(time * 0.0045) * 0.07;
       probeHalo.scale.setScalar(pulse);
     }
     controls.update();
+    emitVertexLabels();
+    sortPhaseBodies();
     composer.render();
 
     if (quality === "high" && document.visibilityState === "visible") {
@@ -399,11 +551,11 @@ export function createPhaseScene({
     setTemperature,
     setExploded,
     setFilters,
+    setPhaseVisibility,
     setHighlight,
     setPoint,
     clearPoint,
     resetView,
-    getQuality: () => quality,
     dispose() {
       disposed = true;
       cancelAnimationFrame(animationFrame);
@@ -416,7 +568,6 @@ export function createPhaseScene({
       disposeObject(slice);
       disposeObject(probePoint);
       composer.dispose();
-      environmentTarget.dispose();
       renderer.dispose();
       renderer.domElement.remove();
     },
