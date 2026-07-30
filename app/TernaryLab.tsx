@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { brandLogo } from "./brandLogo";
+import { HomeIcon } from "./Icons";
 import {
   type ModelKey,
   type PhaseCategory,
@@ -16,24 +17,21 @@ import {
 
 const MODEL_META: Record<
   ModelKey,
-  { short: string; title: string; subtitle: string; note: string }
+  { short: string; title: string; note: string }
 > = {
   isomorphous: {
     short: "三元匀晶",
     title: "三元匀晶相图",
-    subtitle: "Ternary Isomorphous Phase Diagram",
     note: "观察液相、L + α 两相区与 α 固相区如何随温度连续过渡。",
   },
   eutectic: {
     short: "不互溶共晶",
     title: "固态不互溶的三元共晶相图",
-    subtitle: "No Solid Solubility",
     note: "液相面向三元共晶点收敛，低温三相区形成清晰的水平反应层。",
   },
   limited: {
     short: "有限互溶共晶",
     title: "固态有限互溶的三元共晶相图",
-    subtitle: "Limited Solid Solubility",
     note: "在共晶骨架上加入固态溶解度边界，比较 α + β 两相区的空间变化。",
   },
 };
@@ -158,19 +156,8 @@ export default function TernaryLab() {
     setAnalysis({ c, phase, a, b, t });
   }
 
-  function resetView() {
-    const resetFilters = { ...ALL_VISIBLE };
-    setTemperature(100);
-    setExploded(false);
-    setFilters(resetFilters);
-    setComposition({ a: 30, b: 40, t: 50 });
-    setAnalysis(null);
-    setSelectedPhase(null);
-    const controller = sceneController.current;
-    controller?.resetView();
-    controller?.setTemperature(100, false);
-    controller?.setExploded(false, 100);
-    controller?.setFilters(resetFilters);
+  function resetCamera() {
+    sceneController.current?.resetView();
   }
 
   return (
@@ -182,8 +169,14 @@ export default function TernaryLab() {
           </div>
           <div>
             <h1>材科基 · 三元相图3D可视化实验室</h1>
-            <div className="brand-subtitle">Materials Fundamentals Ternary Phase Lab</div>
+            <span className="brand-subtitle">Materials Fundamentals Ternary Phase Lab</span>
           </div>
+        </div>
+        <div className="top-actions">
+          <button className="top-action-button" type="button" onClick={resetCamera}>
+            <HomeIcon />
+            <span>重置视角</span>
+          </button>
         </div>
       </header>
 
@@ -341,7 +334,6 @@ export default function TernaryLab() {
               <img src={brandLogo} alt="" />
               <div>
                 <h2>{meta.title}</h2>
-                <p>{meta.subtitle}</p>
               </div>
             </div>
           </div>
@@ -431,12 +423,6 @@ export default function TernaryLab() {
             <p>{meta.note}</p>
           </section>
 
-          <section className="panel reset-panel">
-            <button className="reset-button" onClick={resetView}>
-              <span aria-hidden="true">↻</span>
-              重置视角与状态
-            </button>
-          </section>
         </aside>
       </section>
     </main>

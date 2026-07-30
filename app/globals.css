@@ -29,8 +29,8 @@ body {
 body {
   color: var(--text);
   font-family:
-    Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    "PingFang SC", "Microsoft YaHei", sans-serif;
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
   overflow: hidden;
 }
 
@@ -1150,25 +1150,71 @@ kbd {
   gap: 12px;
   overflow: hidden;
   background:
-    radial-gradient(circle at 42% 38%, rgba(41, 132, 255, 0.16), transparent 28rem),
-    radial-gradient(circle at 70% 18%, rgba(74, 222, 128, 0.06), transparent 24rem),
+    radial-gradient(circle at 42% 38%, rgba(41, 132, 255, 0.18), transparent 28rem),
+    radial-gradient(circle at 70% 18%, rgba(74, 222, 128, 0.08), transparent 24rem),
     linear-gradient(180deg, #050b13 0%, #08121f 46%, #06101c 100%);
 }
 
 .topbar {
   width: 100%;
   height: auto;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(380px, 1fr) auto;
   align-items: center;
+  gap: 28px;
   padding: 12px 24px;
   border: 1px solid rgba(115, 152, 196, 0.48);
   border-radius: 10px;
   background: rgba(7, 13, 22, 0.9);
   box-shadow: 0 10px 34px rgba(0, 0, 0, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  min-width: 0;
+}
+
+.top-actions {
+  justify-self: end;
+  width: 424px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 14px;
+  min-width: 0;
+}
+
+.top-action-button {
+  min-height: 48px;
+  padding: 0 15px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: #e7eef7;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease;
+}
+
+.top-action-button svg {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+}
+
+.top-action-button:hover {
+  background: rgba(21, 136, 255, 0.12);
+  color: #fff;
+}
+
+.top-action-button:active {
+  background: rgba(21, 136, 255, 0.12);
 }
 
 .brand-block {
   gap: 14px;
+  min-width: 0;
+  line-height: normal;
 }
 
 .brand-mark {
@@ -1186,6 +1232,7 @@ kbd {
   width: 100%;
   height: 100%;
   object-fit: contain;
+  transform: scale(1.55);
   filter: drop-shadow(0 0 11px rgba(66, 166, 226, 0.28));
 }
 
@@ -1194,14 +1241,19 @@ kbd {
   color: #edf5ff;
   font-size: 25px;
   line-height: 1.1;
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .brand-subtitle {
+  display: block;
   margin-top: 7px;
   color: #bdc9d8;
   font-size: 13px;
+  line-height: normal;
   font-weight: 600;
 }
 
@@ -1386,6 +1438,7 @@ kbd {
   width: 34px;
   height: 34px;
   object-fit: contain;
+  transform: scale(1.45);
   filter: drop-shadow(0 0 8px rgba(66, 166, 226, 0.24));
 }
 
@@ -1393,12 +1446,6 @@ kbd {
   margin: 0;
   font-size: 18px;
   font-weight: 800;
-}
-
-.viewport-title p {
-  margin-top: 5px;
-  color: #8092a7;
-  font-size: 10px;
 }
 
 .view-badge {
@@ -1493,6 +1540,17 @@ kbd {
     grid-template-rows: auto minmax(0, 1fr);
   }
 
+  .topbar {
+    grid-template-columns: 1fr auto;
+    gap: 12px;
+  }
+
+  .top-actions {
+    justify-self: stretch;
+    justify-content: space-between;
+    flex-wrap: wrap;
+  }
+
   .workspace {
     grid-template-columns: 270px minmax(420px, 1fr);
     overflow: visible;
@@ -1516,18 +1574,39 @@ kbd {
   }
 
   .topbar {
-    padding: 12px 16px;
+    grid-template-columns: 1fr;
+  }
+
+  .top-actions {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    justify-content: space-between;
   }
 
   .brand-mark {
-    width: 42px;
-    height: 42px;
-    flex-basis: 42px;
+    width: 54px;
+    height: 54px;
+    flex-basis: 54px;
   }
 
   .brand-block h1 {
-    font-size: 18px;
+    font-size: 17px;
     white-space: normal;
+  }
+
+  .top-action-button {
+    height: 48px;
+    justify-content: center;
+    padding: 0 7px;
+    background: rgba(255, 255, 255, 0.04);
+    font-size: 16px;
+  }
+
+  .top-action-button svg {
+    width: 28px;
+    height: 28px;
+    flex-basis: 28px;
   }
 
   .workspace {
@@ -1550,11 +1629,35 @@ kbd {
 }
 
 @media (max-width: 520px) {
+  .brand-block {
+    gap: 9px;
+  }
+
+  .brand-mark {
+    width: 34px;
+    height: 34px;
+    flex-basis: 34px;
+  }
+
   .brand-subtitle {
     font-size: 11px;
   }
 
   .viewport {
     height: 560px;
+  }
+
+  .top-action-button {
+    min-width: 0;
+    width: auto;
+    gap: 4px;
+    padding: 0 4px;
+    font-size: 12px;
+  }
+
+  .top-action-button svg {
+    width: 18px;
+    height: 18px;
+    flex-basis: 18px;
   }
 }

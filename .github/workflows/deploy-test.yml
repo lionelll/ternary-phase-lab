@@ -22,9 +22,9 @@ jobs:
       name: test
       url: http://123.57.11.145:8080/ternary/
     env:
-      DEPLOY_HOST: ${{ secrets.TEST_SERVER_HOST }}
-      DEPLOY_PORT: ${{ secrets.TEST_SERVER_PORT }}
-      DEPLOY_USER: ${{ secrets.TEST_SERVER_USER }}
+      DEPLOY_HOST: 123.57.11.145
+      DEPLOY_PORT: "22"
+      DEPLOY_USER: root
       DEPLOY_ROOT: /var/www/ternary-dev
 
     steps:
@@ -46,25 +46,43 @@ jobs:
       - name: Prepare deployment archive
         run: tar -C static-dist -czf "/tmp/ternary-${GITHUB_SHA}.tgz" .
 
-      - name: Configure SSH
-        env:
-          SSH_PRIVATE_KEY: ${{ secrets.TEST_SERVER_SSH_KEY }}
+      - name: Install password login support
         run: |
+          sudo apt-get update
+          sudo apt-get install --yes sshpass
+
+      - name: Configure SSH host verification
+        env:
+          SSHPASS: ${{ secrets.TEST_SERVER_PASSWORD }}
+        run: |
+          test -n "$SSHPASS" || {
+            echo "Missing GitHub secret: TEST_SERVER_PASSWORD" >&2
+            exit 1
+          }
           install -m 700 -d ~/.ssh
-          install -m 600 /dev/null ~/.ssh/id_ed25519
-          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
           ssh-keyscan -p "$DEPLOY_PORT" -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
 
       - name: Upload release
+        env:
+          SSHPASS: ${{ secrets.TEST_SERVER_PASSWORD }}
         run: |
-          scp -P "$DEPLOY_PORT" \
+          sshpass -e scp \
+            -o PreferredAuthentications=password \
+            -o PubkeyAuthentication=no \
+            -P "$DEPLOY_PORT" \
             "/tmp/ternary-${GITHUB_SHA}.tgz" \
             scripts/deploy-test.sh \
             "$DEPLOY_USER@$DEPLOY_HOST:/tmp/"
 
       - name: Activate release
+        env:
+          SSHPASS: ${{ secrets.TEST_SERVER_PASSWORD }}
         run: |
-          ssh -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \
+          sshpass -e ssh \
+            -o PreferredAuthentications=password \
+            -o PubkeyAuthentication=no \
+            -p "$DEPLOY_PORT" \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
             "DEPLOY_ROOT='$DEPLOY_ROOT' bash /tmp/deploy-test.sh '/tmp/ternary-${GITHUB_SHA}.tgz' '$GITHUB_SHA'"
 
       - name: Verify deployment

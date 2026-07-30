@@ -6,8 +6,9 @@ export const metadata: Metadata = {
   description:
     "面向材料科学教学的三元相图 3D 交互可视化平台，支持等温切片、爆炸视图、相区高亮与成分点分析。",
   icons: {
-    icon: "/favicon.svg",
-    shortcut: "/favicon.svg",
+    icon: "/brand-logo.png?v=2",
+    shortcut: "/brand-logo.png?v=2",
+    apple: "/brand-logo.png?v=2",
   },
 };
 

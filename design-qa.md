@@ -94,4 +94,72 @@ The source mock exaggerates the liquidus silhouette into a deeper front-edge cur
 - Optional P3: introduce one low-intensity rectangular key light for a broader face highlight after stakeholder review.
 - Optional P3: automate native range dragging in a browser surface that exposes a reliable pointer-drag event for range inputs.
 
+Previous final result: passed
+
+---
+
+# Design QA — 2026-07-30 晶体结构界面精确对齐
+
+## Comparison target
+
+- Primary source visual truth: `/Users/lionel/Desktop/04.项目合集/00-材料/材科基晶体结构部分/交付文档/晶体结构页面_1920x1080_100pct.png`.
+- Source code truth: crystal-structure `dev@5bbf2f6`, `src/App.tsx`, `src/styles.css`, `src/components/Icons.tsx`, and `src/assets/brand-logo.png` (read-only).
+- Implementation screenshot: `/private/tmp/ternary-crystal-match-1920x1080-pass1.png`.
+- Viewport: `1920 x 1080` CSS px, device scale factor `1`.
+- Source pixels: `1920 x 1080`; implementation pixels: `1920 x 1080`; no density normalization was required.
+- State: desktop default, 三元匀晶相图, temperature `100%`, all categories visible, explosion off, no selected phase or composition point.
+
+## Full-view comparison evidence
+
+The crystal reference and ternary implementation were opened together at equal `1920 x 1080` dimensions. The page shell, 10px outer margin, 96px header track, 12px section gap, header border/radius/background, left and central column starts, central-title baseline, logo visual scale, type hierarchy, and panel rhythm align with the source system. App-specific content and the 3D models remain intentionally different.
+
+## Focused region comparison evidence
+
+Browser-computed desktop measurements were checked against the source CSS:
+
+- Header: `1900 x 96`, `12px 24px` padding, `28px` grid gap.
+- Primary logo container: `54 x 54`; rendered transform: `scale(1.55)`; visual bounds: `83.7 x 83.7`.
+- Brand-to-copy layout gap: `14px`; Chinese title: `25px / 1.1`; subtitle: `13px` with `7px` top margin.
+- Top reset action: `132 x 48`, `15px` horizontal padding, `10px` inner gap, `16px / 700`; icon: `28 x 28`.
+- Central title: `68px` high with `0 26px` padding and `13px` gap.
+- Central logo container: `34 x 34`; rendered transform: `scale(1.45)`; visual bounds: `49.3 x 49.3`.
+- Central title: `18px / 800`.
+
+These values match the crystal-structure source rules exactly. The embedded ternary logo decodes to SHA-256 `8162c77c7aa359c58270d476cfb494170ddf51fade61f27dcb267ff2484fe588`, identical to the crystal source asset.
+
+## Implemented changes
+
+- Replaced approximate enlarged boxes with the crystal page's exact container-plus-transform technique for both logos.
+- Reproduced the crystal header grid, spacing, colors, typography, responsive rules, button dimensions, and hover state.
+- Reused the crystal page's exact home icon path in a ternary-owned icon component.
+- Removed all English subtitles beneath the three phase-diagram titles.
+- Removed the right-rail “重置视角与状态” panel.
+- Kept the top action as “重置视角” and limited it to camera reset only.
+
+## Required fidelity surfaces
+
+- Fonts and typography: family, fallbacks, weights, sizes, line heights, ellipsis behavior, and subtitle rhythm match the source CSS.
+- Spacing and layout rhythm: header grid, logo boxes, transform overflow, gaps, title padding, section gaps, radii, and borders match the source measurements.
+- Colors and visual tokens: shell gradients, header surface, line colors, text colors, and reset-action hover treatment match the crystal source.
+- Image quality and asset fidelity: the same `295 x 295` RGBA PNG is used with an identical SHA-256; no replacement or approximation is present.
+- Copy and content: app-specific Chinese titles remain; English model subtitles and “重置视角与状态” are absent; top “重置视角” is present.
+
+## Verification
+
+- Static production build: passed under Node `24.18.1`.
+- Phase geometry tests: `4/4` passed.
+- Targeted source ESLint: passed with `0` errors.
+- Reset action: exactly one accessible “重置视角” button; click completed successfully.
+- Browser console after reload and reset click: no errors or warnings.
+
+## Findings
+
+- No actionable P0/P1/P2 fidelity findings remain for the requested header, logo spacing, central model title, and reset-action scope.
+- [P3] The ternary header has one action while the crystal source has three, so the empty header space is intentionally larger; this reflects requested product scope rather than styling drift.
+
+## Comparison history
+
+- Iteration 0: approximate `64px` and `48px` logo boxes left the visible logo-to-copy spacing too large; browser comparison was unavailable.
+- Iteration 1: replaced the approximations with source-exact `54px × 1.55` and `34px × 1.45` layouts, copied the source header grid/button/icon rules, captured at `1920 x 1080`, and verified computed geometry and interaction.
+
 final result: passed
