@@ -4,14 +4,15 @@ import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { SMAAPass } from "three/examples/jsm/postprocessing/SMAAPass.js";
-import { SSAOPass } from "three/examples/jsm/postprocessing/SSAOPass.js";
 import {
   DEFAULT_CAMERA_POSITION,
   DEFAULT_CAMERA_TARGET,
   A_VERTEX,
   B_VERTEX,
   C_VERTEX,
-  DISPLAY_TOP_Y,
+  CAMERA_FOV,
+  TEMPERATURE_SPAN,
+  TOP_Y,
   PHASE_BODY_RENDER_ORDER_BASE,
   PHASE_EDGE_RENDER_ORDER_BASE,
   type ModelKey,
@@ -63,60 +64,38 @@ type SceneOptions = {
 
 function makeSlice() {
   const geometry = makeSliceGeometry();
+  // 与 demo 一致：青色、opacity 0.25、加色混合，边线同为纯青色。
   const material = new THREE.MeshBasicMaterial({
     color: 0x00ffff,
     transparent: true,
-    opacity: 0.16,
+    opacity: 0.25,
     side: THREE.DoubleSide,
     depthWrite: false,
-    toneMapped: false,
+    blending: THREE.AdditiveBlending,
   });
   const slice = new THREE.Mesh(geometry, material);
-  const edgeMaterial = new THREE.LineBasicMaterial({
-    color: 0x8ff7ff,
-    transparent: true,
-    opacity: 0.72,
-    depthWrite: false,
-    toneMapped: false,
-  });
+  const edgeMaterial = new THREE.LineBasicMaterial({ color: 0x00ffff });
   const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geometry), edgeMaterial);
   edges.renderOrder = 201;
   slice.add(edges);
   slice.renderOrder = 200;
-  slice.position.y = DISPLAY_TOP_Y;
+  slice.position.y = TEMPERATURE_SPAN;
   slice.visible = false;
   return slice;
 }
 
 function makeProbePoint() {
-  const root = new THREE.Group();
-  const pointMaterial = new THREE.MeshBasicMaterial({
+  // 与 demo 一致：半径 0.5 的纯黄小球，关闭深度测试保证永不被遮挡，不加光晕。
+  const material = new THREE.MeshBasicMaterial({
     color: 0xffe600,
     depthTest: false,
-    depthWrite: false,
-    toneMapped: false,
-  });
-  const point = new THREE.Mesh(new THREE.SphereGeometry(0.44, 32, 24), pointMaterial);
-  point.renderOrder = 1001;
-  point.frustumCulled = false;
-
-  const haloMaterial = new THREE.MeshBasicMaterial({
-    color: 0xffed4a,
     transparent: true,
-    opacity: 0.18,
-    depthTest: false,
-    depthWrite: false,
-    toneMapped: false,
-    blending: THREE.AdditiveBlending,
   });
-  const halo = new THREE.Mesh(new THREE.SphereGeometry(0.66, 24, 16), haloMaterial);
-  halo.renderOrder = 1000;
-  halo.frustumCulled = false;
-
-  root.add(halo, point);
-  root.visible = false;
-  root.renderOrder = 1000;
-  return { root, halo };
+  const point = new THREE.Mesh(new THREE.SphereGeometry(0.5, 32, 32), material);
+  point.renderOrder = 999;
+  point.frustumCulled = false;
+  point.visible = false;
+  return point;
 }
 
 export function createPhaseScene({
@@ -127,12 +106,11 @@ export function createPhaseScene({
 }: SceneOptions): PhaseSceneController {
   const scene = new THREE.Scene();
 
-  // 舞台底色不在 WebGL 里画，改由 CSS 的 .viewport（#05070C，对齐 crystal-structure-lab
-  // 的 setClearColor(0x05070c)）提供，画布本身保持透明。
+  // 舞台底色不在 WebGL 里画，改由 CSS 的 .viewport 提供，画布保持透明。
+  // 参考 demo 同样用 alpha:true，让 3D 融进页面底色。
   //
-  // 原因：本场景开了 ACES 色调映射并经 EffectComposer 的 OutputPass 输出，OutputPass 会对
-  // 整幅图像（含背景）做色调映射。#05070C 太暗，ACES 在近黑区会把它压到 rgb(0,0,1)，
-  // 于是画布空白处呈纯黑而不是设定的底色。透明画布让底色绕开色调映射，颜色才精确。
+  // 这里不设 toneMapping、不开 shadowMap、也不做 SSAO —— 参考 demo 都没有，
+  // 而相区体是 65% 半透明的，色调映射会把暗部压死、SSAO 会在半透明面上产生错误的接触阴影。
   const renderer = new THREE.WebGLRenderer({
     antialias: true,
     alpha: true,
@@ -140,33 +118,32 @@ export function createPhaseScene({
   });
   renderer.setClearColor(0x000000, 0);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 0.94;
   renderer.localClippingEnabled = true;
-  renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFShadowMap;
   renderer.domElement.dataset.renderQuality = "high";
   host.appendChild(renderer.domElement);
 
-  const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 1000);
+  const camera = new THREE.PerspectiveCamera(CAMERA_FOV, 1, 0.1, 1000);
   camera.position.copy(DEFAULT_CAMERA_POSITION);
 
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
   controls.dampingFactor = 0.055;
   controls.target.copy(DEFAULT_CAMERA_TARGET);
-  controls.minDistance = 27;
-  controls.maxDistance = 58;
+  controls.minDistance = 24;
+  controls.maxDistance = 90;
   controls.minPolarAngle = 0.28;
   controls.maxPolarAngle = Math.PI / 2 - 0.04;
   controls.screenSpacePanning = true;
 
   // 允许右键平移把视点移出模型中心，但不允许把模型平移到视野之外。
-  // 范围取模型自身尺寸，成分探测点（x/z 最大 ±10.4，y ∈ [0, DISPLAY_TOP_Y]）也落在其中，
+  // 范围取模型自身尺寸，成分探测点（x/z 最大 ±11.5，y ∈ [0, TEMPERATURE_SPAN]）也落在其中，
   // 所以视角追踪不会被截断。
-  const TARGET_LIMIT_XZ = 11;
+  /** 爆炸视图的上下位移量（demo 的 gsap 目标值）。 */
+  const EXPLODE_OFFSET = 3;
+
+  const TARGET_LIMIT_XZ = 12;
   const TARGET_LIMIT_Y_MIN = 0;
-  const TARGET_LIMIT_Y_MAX = DISPLAY_TOP_Y + 1;
+  const TARGET_LIMIT_Y_MAX = TOP_Y + 1;
 
   function clampTarget() {
     controls.target.x = THREE.MathUtils.clamp(
@@ -186,29 +163,14 @@ export function createPhaseScene({
     );
   }
 
-  scene.add(new THREE.AmbientLight(0x708090, 0.48));
-
-  const keyLight = new THREE.DirectionalLight(0xffffff, 1.8);
-  keyLight.position.set(15, 28, 19);
-  keyLight.castShadow = true;
-  keyLight.shadow.mapSize.set(1024, 1024);
-  keyLight.shadow.camera.left = -19;
-  keyLight.shadow.camera.right = 19;
-  keyLight.shadow.camera.top = 21;
-  keyLight.shadow.camera.bottom = -17;
-  keyLight.shadow.camera.near = 1;
-  keyLight.shadow.camera.far = 70;
-  keyLight.shadow.bias = -0.00035;
-  keyLight.shadow.normalBias = 0.028;
+  // 光照与 demo 一致：白色环境光 + 两盏方向光，不投阴影。
+  scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+  const keyLight = new THREE.DirectionalLight(0xffffff, 1.0);
+  keyLight.position.set(20, 30, 10);
   scene.add(keyLight);
-
-  const rimLight = new THREE.DirectionalLight(0x38bdf8, 0.65);
-  rimLight.position.set(-18, 11, -24);
-  scene.add(rimLight);
-
-  const warmFill = new THREE.DirectionalLight(0xffad70, 0.22);
-  warmFill.position.set(17, 5, -13);
-  scene.add(warmFill);
+  const fillLight = new THREE.DirectionalLight(0xffffff, 0.5);
+  fillLight.position.set(-20, 10, -20);
+  scene.add(fillLight);
 
   const phaseGroup = new THREE.Group();
   scene.add(phaseGroup);
@@ -216,25 +178,22 @@ export function createPhaseScene({
   const frame = makeReferenceFrame();
   scene.add(frame);
 
-  const slicePlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), DISPLAY_TOP_Y);
+  const slicePlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), TEMPERATURE_SPAN);
   const slice = makeSlice();
   scene.add(slice);
 
-  const { root: probePoint, halo: probeHalo } = makeProbePoint();
+  const probePoint = makeProbePoint();
   probePoint.traverse((object) => object.layers.set(1));
   camera.layers.enable(1);
   scene.add(probePoint);
 
+  // 后期只保留抗锯齿：SMAA 让相界线在半透明面上依然平滑（PRD 四.2 的要求）。
+  // 不加 SSAO —— 相区体是半透明的，屏幕空间环境光遮蔽会在透明面之间算出错误的暗带。
   const renderPass = new RenderPass(scene, camera);
-  const ssaoPass = new SSAOPass(scene, camera, 1, 1);
-  ssaoPass.kernelRadius = 7;
-  ssaoPass.minDistance = 0.002;
-  ssaoPass.maxDistance = 0.07;
   const smaaPass = new SMAAPass();
   const outputPass = new OutputPass();
   const composer = new EffectComposer(renderer);
   composer.addPass(renderPass);
-  composer.addPass(ssaoPass);
   composer.addPass(smaaPass);
   composer.addPass(outputPass);
 
@@ -341,19 +300,8 @@ export function createPhaseScene({
     if (quality === nextQuality) return;
     quality = nextQuality;
     renderer.domElement.dataset.renderQuality = nextQuality;
-    const highQuality = quality === "high";
-    ssaoPass.enabled = highQuality;
-    smaaPass.enabled = highQuality;
-    renderer.shadowMap.enabled = highQuality;
-    keyLight.castShadow = highQuality;
-    phaseVisuals.forEach((visual) => {
-      visual.pickMesh.castShadow = highQuality;
-      visual.pickMesh.receiveShadow = highQuality;
-      // 运行时改变 shadowMap.enabled 不会自动重编译已存在的材质，
-      // 必须显式标记，否则降级后阴影相关的 shader 分支仍留在程序里。
-      visual.frontMaterial.needsUpdate = true;
-    });
-    renderer.shadowMap.needsUpdate = true;
+    // 降级只关抗锯齿并降像素比；材质与光照保持不变，避免观感在运行中突变。
+    smaaPass.enabled = quality === "high";
     setRenderSize();
   }
 
@@ -388,7 +336,7 @@ export function createPhaseScene({
   function setTemperature(temperature: number, exploded: boolean) {
     currentTemperature = temperature;
     currentExploded = exploded;
-    const y = (temperature / 100) * DISPLAY_TOP_Y;
+    const y = (temperature / 100) * TEMPERATURE_SPAN;
     slicePlane.constant = y;
     slice.position.y = y;
     slice.visible = temperature < 100 && !exploded;
@@ -403,9 +351,9 @@ export function createPhaseScene({
     phaseVisuals.forEach((visual) => {
       visual.targetY = exploded
         ? visual.explode === "up"
-          ? 2.3
+          ? EXPLODE_OFFSET
           : visual.explode === "down"
-            ? -2.3
+            ? -EXPLODE_OFFSET
             : 0
         : 0;
       visual.root.userData.targetY = visual.targetY;
@@ -522,10 +470,6 @@ export function createPhaseScene({
       }
     }
     clampTarget();
-    if (probePoint.visible) {
-      const pulse = 1 + Math.sin(time * 0.0045) * 0.07;
-      probeHalo.scale.setScalar(pulse);
-    }
     controls.update();
     emitVertexLabels();
     sortPhaseBodies();

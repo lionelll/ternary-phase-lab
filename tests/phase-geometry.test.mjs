@@ -37,18 +37,19 @@ test("every rendered phase can also be reached by composition analysis", () => {
 });
 
 test("limited-solubility analysis distinguishes solid solution and solid two-phase regions", () => {
-  assert.equal(phaseAt("limited", 30, 40, 8).meshId, "beta-solution");
+  assert.equal(phaseAt("limited", 30, 40, 15).meshId, "beta-solution");
 
-  const solidTwoPhase = phaseAt("limited", 30, 40, 17);
-  assert.equal(solidTwoPhase.title, "α + β 固态两相区");
+  const solidTwoPhase = phaseAt("limited", 30, 40, 30);
+  assert.equal(solidTwoPhase.title, "α + β 固态两相区 (α + β)");
   assert.equal(solidTwoPhase.meshId, "alpha-beta");
   assert.equal(solidTwoPhase.detail, "α + β");
 });
 
 test("three-phase labels name the solid pair of the composition's own sub-triangle", () => {
-  const alphaBeta = phaseAt("eutectic", 70, 20, 17);
-  const betaGamma = phaseAt("eutectic", 15, 15, 17);
-  const gammaAlpha = phaseAt("eutectic", 45, 5, 17);
+  // 取样温度按 TEMPERATURE_SPAN=15 的量程选取（滑块百分比，不是物理高度）。
+  const alphaBeta = phaseAt("eutectic", 0, 100, 29.75);
+  const betaGamma = phaseAt("eutectic", 0, 0, 29.75);
+  const gammaAlpha = phaseAt("eutectic", 5, 0, 29.75);
 
   assert.equal(alphaBeta.detail, "Liquid + α + β");
   assert.equal(alphaBeta.meshId, "eutectic-three-alpha-beta");
@@ -88,38 +89,49 @@ test("cooling one composition never swaps a solid component in or out", () => {
   }
 });
 
-test("eutectic and limited surfaces are ordered and continuous around the center", () => {
+test("eutectic and limited surfaces stay ordered, and meet exactly at the ternary eutectic point", () => {
   for (const model of ["eutectic", "limited"]) {
     const boundaries = surfacesFor(model);
-    const samples = [
-      [1 / 3, 1 / 3, 1 / 3],
-      [0.334, 0.333, 0.333],
-      [0.333, 0.334, 0.333],
-      [0.333, 0.333, 0.334],
-      [0.8, 0.1, 0.1],
-    ];
 
-    for (const [u, v, w] of samples) {
+    // 形心即三元共晶点 E：液相面、固相面（水平反应面）在此重合，这是不变点的定义，
+    // 所以这里只能要求「不小于」，不能要求严格大于。
+    const center = [1 / 3, 1 / 3, 1 / 3];
+    assert.ok(
+      Math.abs(boundaries.liquidus(...center) - boundaries.solidus(...center)) < 1e-9,
+      `${model} 的液相面应在形心处正好落到三相水平反应面（三元共晶点 E）`,
+    );
+
+    // 离开 E 之后液相面必须严格高于反应面。
+    for (const [u, v, w] of [
+      [1, 0, 0],
+      [0, 1, 0],
+      [0, 0, 1],
+      [0.5, 0.5, 0],
+      [0.8, 0.1, 0.1],
+    ]) {
       const solidus = boundaries.solidus(u, v, w);
       const liquidus = boundaries.liquidus(u, v, w);
-      assert.ok(solidus < liquidus, `${model} solidus must stay below liquidus`);
+      assert.ok(liquidus > solidus, `${model} 在 ${u}/${v}/${w} 处液相面应高于反应面`);
 
       if (boundaries.invariantTop) {
         const invariant = boundaries.invariantTop(u, v, w);
-        assert.ok(invariant > solidus);
-        assert.ok(invariant < liquidus);
+        assert.ok(invariant > solidus && invariant < liquidus);
       }
-
       if (boundaries.solvus) {
         assert.ok(boundaries.solvus(u, v, w) < solidus);
       }
     }
 
-    const centerLiquidus = boundaries.liquidus(1 / 3, 1 / 3, 1 / 3);
-    const adjacentLiquidus = boundaries.liquidus(0.334, 0.333, 0.333);
+    // 三相水平反应面必须是真正的水平面（整个三角形同一高度）。
+    const levels = [
+      boundaries.solidus(1, 0, 0),
+      boundaries.solidus(0, 1, 0),
+      boundaries.solidus(0.2, 0.5, 0.3),
+      boundaries.solidus(...center),
+    ];
     assert.ok(
-      Math.abs(centerLiquidus - adjacentLiquidus) < 0.01,
-      `${model} liquidus should not form a hard crease at the center`,
+      Math.max(...levels) - Math.min(...levels) < 1e-9,
+      `${model} 的三相反应面应是水平面`,
     );
   }
 });

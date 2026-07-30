@@ -50,6 +50,13 @@ const ALL_VISIBLE: Record<PhaseCategory, boolean> = {
   three: true,
 };
 
+/** 当前温度状态里相区名的取色，取自 demo 的 updatePhaseTextByTemp。 */
+const STATUS_ACCENT = {
+  liquid: "#93c5fd",
+  twoPhase: "#5eead4",
+  solid: "#fcd34d",
+} as const;
+
 const EMPTY_VERTEX_LABELS: VertexLabelPositions = {
   A: { x: 0, y: 0, visible: false },
   B: { x: 0, y: 0, visible: false },
@@ -93,6 +100,19 @@ export default function TernaryLab() {
     () => phaseAt(model, 100 / 3, 100 / 3, temperature),
     [model, temperature],
   );
+
+  /** 当前相区名的取色，取值与 demo 的 updatePhaseTextByTemp 一致。 */
+  const statusAccent = useMemo(() => {
+    const category = selectedPhase
+      ? phaseSpecs.find((phase) => phase.name === selectedPhase)?.category
+      : phaseSpecs.find((phase) => phase.id === sliceStatus.meshId)?.category;
+    const id = selectedPhase
+      ? phaseSpecs.find((phase) => phase.name === selectedPhase)?.id
+      : sliceStatus.meshId;
+    if (id === "liquid") return STATUS_ACCENT.liquid;
+    if (category === "two" || category === "three") return STATUS_ACCENT.twoPhase;
+    return STATUS_ACCENT.solid;
+  }, [phaseSpecs, selectedPhase, sliceStatus.meshId]);
 
   useEffect(() => {
     const host = canvasHost.current;
@@ -447,46 +467,28 @@ export default function TernaryLab() {
         <aside className="right-rail panel-stack info-panel">
           <section className="panel status-panel">
             <div className="card-title">当前温度状态</div>
+            {/* 形式与 demo 的 #status-display 一致：居中卡片 + 小号大写标签 + 大号相区名，
+                相区名按类别取色（液相 #93c5fd / 两相 #5eead4 / 固相 #fcd34d）。 */}
             <div className="status-card">
-              <div className="status-icon" aria-hidden="true">◇</div>
               <small>{selectedPhase ? "已选中相区" : "中心成分当前温度"}</small>
-              <strong>{selectedPhase ?? sliceStatus.title}</strong>
+              <strong style={{ color: statusAccent }}>
+                {selectedPhase ?? sliceStatus.title}
+              </strong>
               <p>
                 {selectedPhase
-                  ? "已选中相区，点击空白处可取消高亮。"
-                  : `固定参考 A/B/C = 33.33% · ${sliceStatus.detail}`}
+                  ? "点击空白处可取消高亮"
+                  : `固定参考 A / B / C = 33.33%`}
               </p>
             </div>
           </section>
 
           <section className="panel filter-section">
-            <div className="card-title">相区可见性选择</div>
+            <div className="card-title">相区可见性</div>
             <div className="filter-list">
-              {(Object.keys(CATEGORY_LABELS) as PhaseCategory[]).map((category) => {
-                const hasCategory = phaseSpecs.some((phase) => phase.category === category);
-                return <label key={category} className="filter-row">
-                  <input
-                    type="checkbox"
-                    checked={filters[category]}
-                    disabled={!hasCategory}
-                    onChange={(event) =>
-                      setFilters((current) => ({
-                        ...current,
-                        [category]: event.target.checked,
-                      }))
-                    }
-                  />
-                  <span className={`filter-indicator ${category}`} />
-                  <span>
-                    <strong>{CATEGORY_LABELS[category]}</strong>
-                    <small>{categoryDescription(model, category)}</small>
-                  </span>
-                  <b>{hasCategory ? (filters[category] ? "显示" : "隐藏") : "—"}</b>
-                </label>;
-              })}
-              <div className="phase-visibility-heading">单独显示 / 隐藏相区</div>
+              {/* 主列表：与 demo 一致，按相区逐个勾选，色点用该相区的实际配色。 */}
               <div className="phase-visibility-list">
-                {phaseSpecs.map((phase) => (
+                {/* demo 的列表顺序是液相→两相→固相（高温到低温），layersFor 是自下而上，故倒序。 */}
+                {[...phaseSpecs].reverse().map((phase) => (
                   <label key={phase.id} className="phase-visibility-row">
                     <input
                       type="checkbox"
@@ -499,11 +501,41 @@ export default function TernaryLab() {
                         }))
                       }
                     />
-                    <span className={`filter-indicator ${phase.category}`} />
+                    <span
+                      className="phase-swatch"
+                      style={{ background: `#${phase.color.toString(16).padStart(6, "0")}` }}
+                    />
                     <span>{phase.name}</span>
                   </label>
                 ))}
               </div>
+
+              {/* 次级：PRD 四.3 要求的按类别批量隐藏，demo 没有这一层，放在下面不抢主次。 */}
+              <div className="phase-visibility-heading">按类别批量显示 / 隐藏</div>
+              {(Object.keys(CATEGORY_LABELS) as PhaseCategory[]).map((category) => {
+                const hasCategory = phaseSpecs.some((phase) => phase.category === category);
+                return (
+                  <label key={category} className="filter-row">
+                    <input
+                      type="checkbox"
+                      checked={filters[category]}
+                      disabled={!hasCategory}
+                      onChange={(event) =>
+                        setFilters((current) => ({
+                          ...current,
+                          [category]: event.target.checked,
+                        }))
+                      }
+                    />
+                    <span className={`filter-indicator ${category}`} />
+                    <span>
+                      <strong>{CATEGORY_LABELS[category]}</strong>
+                      <small>{categoryDescription(model, category)}</small>
+                    </span>
+                    <b>{hasCategory ? (filters[category] ? "显示" : "隐藏") : "—"}</b>
+                  </label>
+                );
+              })}
             </div>
           </section>
 

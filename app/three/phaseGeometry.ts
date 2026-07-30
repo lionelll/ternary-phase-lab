@@ -49,19 +49,44 @@ export type PhaseVisual = {
 export const PHASE_BODY_RENDER_ORDER_BASE = 0;
 export const PHASE_EDGE_RENDER_ORDER_BASE = 50;
 
-export const DEFAULT_FRONT_OPACITY = 0.32;
+/*
+ * 以下模型数据全部对齐参考实现《三元匀晶相图3D模型demo》（参考/三元匀晶相图3D模型demo.html）：
+ * 尺寸 L=20、顶面 14、温度轴量程 15、三顶点熔点 3/7/11、相区配色、材质与不透明度、
+ * 相机与光照。三种相图共用这一套风格。
+ */
+export const DEFAULT_FRONT_OPACITY = 0.65;
 export const SELECTED_FRONT_OPACITY = 0.85;
 export const DIMMED_FRONT_OPACITY = 0.05;
+export const DEFAULT_EDGE_OPACITY = 0.5;
+export const SELECTED_EDGE_OPACITY = 1;
+export const DIMMED_EDGE_OPACITY = 0.1;
 
-export const L = 18;
+export const L = 20;
 export const A_VERTEX = new THREE.Vector3(-L / 2, 0, (Math.sqrt(3) * L) / 6);
 export const B_VERTEX = new THREE.Vector3(L / 2, 0, (Math.sqrt(3) * L) / 6);
 export const C_VERTEX = new THREE.Vector3(0, 0, (-Math.sqrt(3) * L) / 3);
+
+/** 相区实体的顶面高度（demo 的 topY）。 */
 export const TOP_Y = 14;
-export const DISPLAY_Y_SCALE = 0.84;
-export const DISPLAY_TOP_Y = TOP_Y * DISPLAY_Y_SCALE;
-export const DEFAULT_CAMERA_POSITION = new THREE.Vector3(25.2, 16.8, 28.4);
-export const DEFAULT_CAMERA_TARGET = new THREE.Vector3(0, 4.8, 0);
+/** 温度轴量程：滑块 0~100% 线性映射到 0~15（demo 的 physicalVal）。略高于 TOP_Y，
+ *  所以 100% 时裁剪面在模型之上，等温截面不切到任何东西。 */
+export const TEMPERATURE_SPAN = 15;
+
+/** A / B / C 三个纯组元的熔点（demo 的 TA / TB / TC）。 */
+export const T_A = 3;
+export const T_B = 7;
+export const T_C = 11;
+
+export const DEFAULT_CAMERA_POSITION = new THREE.Vector3(28, 20, 32);
+export const DEFAULT_CAMERA_TARGET = new THREE.Vector3(0, 6.5, 0);
+export const CAMERA_FOV = 45;
+
+/** 相区配色（demo 原值）。 */
+export const PHASE_COLORS = {
+  solid: 0xd97706,
+  twoPhase: 0x14b8a6,
+  liquid: 0x1e3a8a,
+} as const;
 
 const FULL_DOMAIN: readonly BarycentricPoint[] = [
   [1, 0, 0],
@@ -99,52 +124,132 @@ function smoothInvariantThickness(gap: number, cap: number) {
   return cap * (1 - Math.exp(-Math.max(0, gap) / cap));
 }
 
+/** 三顶点熔点的线性插值（demo 的 linearT）。 */
+const linearT: SurfaceFn = (u, v, w) => u * T_A + v * T_B + w * T_C;
+
+/** 组元交互项，越靠三角形中心越大（demo 用 u*v + v*w + w*u）。 */
+const interaction = (u: number, v: number, w: number) => u * v + v * w + w * u;
+
+/* ---- 两个共晶模型的实测参数（归一化高度 × TOP_Y） ---- */
+
+/** 固态不互溶：三顶点熔点，STL 实测归一化 0.876 / 1.000 / 0.936。 */
+const EUTECTIC_MELTING: readonly [number, number, number] = [
+  0.876 * TOP_Y,
+  1.0 * TOP_Y,
+  0.936 * TOP_Y,
+];
+/** 固态不互溶：三相水平反应面高度，STL 实测归一化 0.301。 */
+const EUTECTIC_INVARIANT = 0.301 * TOP_Y;
+/** 三个二元共晶点温度，STL 侧面实测归一化 0.634 / 0.704 / 0.545（分别在 AB / BC / CA 棱上）。 */
+const EUTECTIC_BINARY: readonly [number, number, number] = [
+  0.634 * TOP_Y,
+  0.704 * TOP_Y,
+  0.545 * TOP_Y,
+];
+/** 三相反应层厚度：STL 连通体实测该水平薄板跨 [0.301, 0.321]，即 0.020。 */
+const EUTECTIC_THREE_PHASE_THICKNESS = 0.020 * TOP_Y;
+
+/** 固态有限互溶：三顶点熔点，STL 实测归一化 0.825 / 1.000 / 1.000。 */
+const LIMITED_MELTING: readonly [number, number, number] = [
+  0.825 * TOP_Y,
+  1.0 * TOP_Y,
+  1.0 * TOP_Y,
+];
+/** 固态有限互溶：三相水平反应面高度，STL 实测归一化 0.391。 */
+const LIMITED_INVARIANT = 0.391 * TOP_Y;
+/** 三个二元共晶点温度，STL 侧面实测归一化 0.590 / 0.636 / 0.616。 */
+const LIMITED_BINARY: readonly [number, number, number] = [
+  0.590 * TOP_Y,
+  0.636 * TOP_Y,
+  0.616 * TOP_Y,
+];
+/** 三相反应层厚度：STL 实测该水平薄板跨 [0.391, 0.404]，即 0.013。 */
+const LIMITED_THREE_PHASE_THICKNESS = 0.013 * TOP_Y;
+
+/**
+ * 三元共晶的液相面。
+ *
+ * 由三片曲面组成，每片从对应纯组元的熔点下降，三片沿共晶沟谷相交并汇于三元共晶点 E。
+ * 每片写成 T_E + (T_m − T_E)·s，其中 s 是该组元的归一化过量：
+ *   s_i = clamp((3·x_i − 1) / 2, 0, 1)
+ * 于是顶点处 x=1 → s=1 → 正好等于熔点；形心处 x=1/3 → s=0 → 正好等于 E 的温度，
+ * 与 STL 实测「形心上方最低点 = 水平反应面高度」一致。
+ * 取三片的最大值：冷却时最先结晶的组元决定液相面，沟谷即两片相交处。
+ */
+function makeEutecticLiquidus(
+  melting: readonly [number, number, number],
+  binary: readonly [number, number, number],
+  invariant: number,
+): SurfaceFn {
+  // 液相面由三片组成，每片对应一个先结晶的固相；取三片最大值，
+  // 相交处自然形成三条共晶沟谷 e_iE，三谷汇于形心处的三元共晶点 E。
+  //
+  // 每片写成：T_E + (T_m − T_E)·s，s 是该组元的归一化过量 clamp((3x−1)/2, 0, 1)。
+  // 于是顶点 x=1 → s=1 → 正好是熔点，形心 x=1/3 → s=0 → 正好是 E，与实测吻合。
+  //
+  // 但只有这一项时，棱中点的高度完全由熔点决定，比实测的二元共晶点 e_i 偏低。
+  // 因此再加一个"棱上抬升"修正项：只在某个组元趋近 0（即位于该棱所在的侧面）时生效，
+  // 大小恰好把棱中点从纯插值高度抬到实测的 e_i，进入三角形内部后迅速衰减到 0。
+  const sheet = (x: number, tm: number) =>
+    invariant + (tm - invariant) * Math.max(0, Math.min(1, (3 * x - 1) / 2));
+
+  // 棱 AB（w=0）中点处纯插值给出的高度，用于反推需要的凹陷量。
+  const lift = (tm0: number, tm1: number, te: number) =>
+    te - Math.max(sheet(0.5, tm0), sheet(0.5, tm1));
+
+  const liftAB = lift(melting[0], melting[1], binary[0]);
+  const liftBC = lift(melting[1], melting[2], binary[1]);
+  const liftCA = lift(melting[2], melting[0], binary[2]);
+
+  return (u, v, w) => {
+    const raw = Math.max(
+      sheet(u, melting[0]),
+      sheet(v, melting[1]),
+      sheet(w, melting[2]),
+    );
+    // 凹陷权重：在对应棱上（第三个组元为 0）且远离顶点时最大，进入内部迅速衰减。
+    const weight = (opposite: number, x0: number, x1: number) =>
+      Math.max(0, 1 - 3 * opposite) * 4 * Math.max(0, x0) * Math.max(0, x1);
+    const bump =
+      liftAB * weight(w, u, v) + liftBC * weight(u, v, w) + liftCA * weight(v, w, u);
+    return Math.max(invariant, raw + bump);
+  };
+}
+
 export function surfacesFor(model: ModelKey) {
   if (model === "isomorphous") {
+    // 与 demo 完全一致：固相线在熔点连线下凹，液相线上凸并截顶于 13.5。
     const solidus: SurfaceFn = (u, v, w) =>
-      clampHeight(3.5 + 2.2 * v + 4.2 * w - 7.2 * (u * v + v * w + w * u));
+      linearT(u, v, w) - 7.5 * interaction(u, v, w);
     const liquidus: SurfaceFn = (u, v, w) =>
-      clampHeight(solidus(u, v, w) + 2.7 + 7.4 * (u * v + v * w + w * u));
+      Math.min(13.5, linearT(u, v, w) + 7.5 * interaction(u, v, w));
     return { solidus, liquidus, invariantTop: undefined, solvus: undefined };
   }
 
   if (model === "eutectic") {
-    const solidus: SurfaceFn = (u, v, w) => {
-      const radial = radialFactor(u, v, w);
-      return clampHeight(1.82 + 0.42 * radial + 0.12 * (v - u));
-    };
-    const liquidus: SurfaceFn = (u, v, w) => {
-      const radial = radialFactor(u, v, w);
-      const vertexBias = 0.34 * u - 0.12 * v + 0.18 * w;
-      return clampHeight(2.42 + 10.7 * radial ** 1.18 + vertexBias);
-    };
-    const invariantTop: SurfaceFn = (u, v, w) => {
-      const low = solidus(u, v, w);
-      const gap = liquidus(u, v, w) - low;
-      return low + smoothInvariantThickness(gap, 0.62);
-    };
+    // 参数取自参考 STL《固相不互溶的三元共晶.stl》实测：
+    //   底面正三角形边长 132.5（三边 132.5/132.4/132.5），温度跨度 153
+    //   三顶点熔点归一化 0.876 / 1.000 / 0.936
+    //   三相水平反应面（= 三元共晶点 E 温度）归一化 0.301：三条棱中点与形心的液相面
+    //   最低点全部落在该高度，证实它是贯穿整个三角形的水平面。
+    const solidus: SurfaceFn = () => EUTECTIC_INVARIANT;
+    const liquidus = makeEutecticLiquidus(EUTECTIC_MELTING, EUTECTIC_BINARY, EUTECTIC_INVARIANT);
+    // 固态完全不互溶：反应面以下即 α+β+γ，三相区就是该水平面之上到液相面之间的薄层。
+    const invariantTop: SurfaceFn = (u, v, w) =>
+      Math.min(liquidus(u, v, w) - 0.02, EUTECTIC_INVARIANT + EUTECTIC_THREE_PHASE_THICKNESS);
     return { solidus, liquidus, invariantTop, solvus: undefined };
   }
 
-  const solidus: SurfaceFn = (u, v, w) => {
-    const radial = radialFactor(u, v, w);
-    return clampHeight(2.52 + 2.18 * radial ** 1.2 + 0.58 * w - 0.14 * u);
-  };
-  const liquidus: SurfaceFn = (u, v, w) => {
-    const radial = radialFactor(u, v, w);
-    return clampHeight(
-      solidus(u, v, w) + 1.3 + 5.9 * radial ** 1.16 + 0.22 * (v - u),
-    );
-  };
-  const solvus: SurfaceFn = (u, v, w) => {
-    const radial = radialFactor(u, v, w);
-    return clampHeight(1.12 + 0.78 * (1 - radial) + 0.1 * w);
-  };
-  const invariantTop: SurfaceFn = (u, v, w) => {
-    const low = solidus(u, v, w);
-    const gap = liquidus(u, v, w) - low;
-    return low + smoothInvariantThickness(gap, 0.55);
-  };
+  // 固态有限互溶：参数取自《固相有限互溶的三元共晶.stl》实测：
+  //   底面边长 151.7，温度跨度 152，顶点熔点归一化 0.825 / 1.000 / 1.000
+  //   三相水平反应面（E 温度）归一化 0.391
+  // 与不互溶的区别是多一层固溶度边界（solvus），反应面以下不再是纯三相机械混合。
+  const solidus: SurfaceFn = () => LIMITED_INVARIANT;
+  const liquidus = makeEutecticLiquidus(LIMITED_MELTING, LIMITED_BINARY, LIMITED_INVARIANT);
+  const solvus: SurfaceFn = (u, v, w) =>
+    LIMITED_INVARIANT * (0.42 + 0.30 * (1 - radialFactor(u, v, w)));
+  const invariantTop: SurfaceFn = (u, v, w) =>
+    Math.min(liquidus(u, v, w) - 0.02, LIMITED_INVARIANT + LIMITED_THREE_PHASE_THICKNESS);
   return { solidus, liquidus, invariantTop, solvus };
 }
 
@@ -157,27 +262,27 @@ export function layersFor(model: ModelKey): LayerSpec[] {
     return [
       {
         id: "alpha-solid",
-        name: "α 固相区",
+        name: "α 固相区 (α)",
         category: "single",
-        color: 0x8c4523,
+        color: PHASE_COLORS.solid,
         bottom: base,
         top: solidus,
         explode: "down",
       },
       {
         id: "liquid-alpha",
-        name: "液相 + α 两相区",
+        name: "液相 + α 两相区 (L + α)",
         category: "two",
-        color: 0x0a8793,
+        color: PHASE_COLORS.twoPhase,
         bottom: solidus,
         top: liquidus,
         explode: "center",
       },
       {
         id: "liquid",
-        name: "液相区",
+        name: "液相区 (Liquid)",
         category: "single",
-        color: 0x27437f,
+        color: PHASE_COLORS.liquid,
         bottom: liquidus,
         top,
         explode: "up",
@@ -189,9 +294,9 @@ export function layersFor(model: ModelKey): LayerSpec[] {
     return [
       {
         id: "alpha-solid",
-        name: "α 固相区",
+        name: "α 固相区 (α)",
         category: "single",
-        color: 0x874221,
+        color: PHASE_COLORS.solid,           // α 固相
         bottom: base,
         top: solidus,
         explode: "down",
@@ -199,9 +304,9 @@ export function layersFor(model: ModelKey): LayerSpec[] {
       },
       {
         id: "beta-solid",
-        name: "β 固相区",
+        name: "β 固相区 (β)",
         category: "single",
-        color: 0x9d5128,
+        color: 0xea8a0a,                     // β 固相（solid 提亮）
         bottom: base,
         top: solidus,
         explode: "down",
@@ -209,9 +314,9 @@ export function layersFor(model: ModelKey): LayerSpec[] {
       },
       {
         id: "gamma-solid",
-        name: "γ 固相区",
+        name: "γ 固相区 (γ)",
         category: "single",
-        color: 0x71381f,
+        color: 0xb45f05,                     // γ 固相（solid 压暗）
         bottom: base,
         top: solidus,
         explode: "down",
@@ -219,9 +324,9 @@ export function layersFor(model: ModelKey): LayerSpec[] {
       },
       {
         id: "eutectic-three-alpha-beta",
-        name: "L + α + β 三相区",
+        name: "L + α + β 三相区 (L + α + β)",
         category: "three",
-        color: 0xf43f5e,
+        color: 0xf43f5e,                     // 三相区：PRD 要求的高亮特征色
         bottom: solidus,
         top: invariantTop!,
         explode: "center",
@@ -229,7 +334,7 @@ export function layersFor(model: ModelKey): LayerSpec[] {
       },
       {
         id: "eutectic-three-beta-gamma",
-        name: "L + β + γ 三相区",
+        name: "L + β + γ 三相区 (L + β + γ)",
         category: "three",
         color: 0xe83f78,
         bottom: solidus,
@@ -239,7 +344,7 @@ export function layersFor(model: ModelKey): LayerSpec[] {
       },
       {
         id: "eutectic-three-gamma-alpha",
-        name: "L + γ + α 三相区",
+        name: "L + γ + α 三相区 (L + γ + α)",
         category: "three",
         color: 0xd946a8,
         bottom: solidus,
@@ -249,9 +354,9 @@ export function layersFor(model: ModelKey): LayerSpec[] {
       },
       {
         id: "liquid-alpha",
-        name: "L + α 两相区",
+        name: "L + α 两相区 (L + α)",
         category: "two",
-        color: 0x076a75,
+        color: PHASE_COLORS.twoPhase,        // L+α 两相
         bottom: invariantTop!,
         top: liquidus,
         explode: "center",
@@ -259,9 +364,9 @@ export function layersFor(model: ModelKey): LayerSpec[] {
       },
       {
         id: "liquid-beta",
-        name: "L + β 两相区",
+        name: "L + β 两相区 (L + β)",
         category: "two",
-        color: 0x0a7c83,
+        color: 0x2dd4bf,                     // L+β 两相（twoPhase 提亮）
         bottom: invariantTop!,
         top: liquidus,
         explode: "center",
@@ -269,9 +374,9 @@ export function layersFor(model: ModelKey): LayerSpec[] {
       },
       {
         id: "liquid-gamma",
-        name: "L + γ 两相区",
+        name: "L + γ 两相区 (L + γ)",
         category: "two",
-        color: 0x095e6c,
+        color: 0x0d9488,                     // L+γ 两相（twoPhase 压暗）
         bottom: invariantTop!,
         top: liquidus,
         explode: "center",
@@ -279,9 +384,9 @@ export function layersFor(model: ModelKey): LayerSpec[] {
       },
       {
         id: "liquid",
-        name: "液相区",
+        name: "液相区 (Liquid)",
         category: "single",
-        color: 0x27437f,
+        color: PHASE_COLORS.liquid,          // 液相
         bottom: liquidus,
         top,
         explode: "up",
@@ -292,9 +397,9 @@ export function layersFor(model: ModelKey): LayerSpec[] {
   return [
     {
       id: "alpha-solution",
-      name: "α 固溶体",
+      name: "α 固溶体 (α)",
       category: "single",
-      color: 0x8c4523,
+      color: PHASE_COLORS.solid,           // α 固溶体
       bottom: base,
       top: solvus!,
       explode: "down",
@@ -302,9 +407,9 @@ export function layersFor(model: ModelKey): LayerSpec[] {
     },
     {
       id: "beta-solution",
-      name: "β 固溶体",
+      name: "β 固溶体 (β)",
       category: "single",
-      color: 0x9d5128,
+      color: 0xea8a0a,                     // β 固相（solid 提亮）
       bottom: base,
       top: solvus!,
       explode: "down",
@@ -312,9 +417,9 @@ export function layersFor(model: ModelKey): LayerSpec[] {
     },
     {
       id: "gamma-solution",
-      name: "γ 固溶体",
+      name: "γ 固溶体 (γ)",
       category: "single",
-      color: 0x71381f,
+      color: 0xb45f05,                     // γ 固相（solid 压暗）
       bottom: base,
       top: solvus!,
       explode: "down",
@@ -322,9 +427,9 @@ export function layersFor(model: ModelKey): LayerSpec[] {
     },
     {
       id: "alpha-beta",
-      name: "α + β 固态两相区",
+      name: "α + β 固态两相区 (α + β)",
       category: "two",
-      color: 0x4da86c,
+      color: 0x0f9488,                     // α+β 固态两相（twoPhase 压暗）
       bottom: solvus!,
       top: solidus,
       explode: "down",
@@ -332,9 +437,9 @@ export function layersFor(model: ModelKey): LayerSpec[] {
     },
     {
       id: "beta-gamma",
-      name: "β + γ 固态两相区",
+      name: "β + γ 固态两相区 (β + γ)",
       category: "two",
-      color: 0x3d9864,
+      color: 0x0d7f75,                     // β+γ 固态两相
       bottom: solvus!,
       top: solidus,
       explode: "down",
@@ -342,9 +447,9 @@ export function layersFor(model: ModelKey): LayerSpec[] {
     },
     {
       id: "gamma-alpha",
-      name: "γ + α 固态两相区",
+      name: "γ + α 固态两相区 (γ + α)",
       category: "two",
-      color: 0x5ab479,
+      color: 0x17c7b4,                     // γ+α 固态两相（twoPhase 提亮）
       bottom: solvus!,
       top: solidus,
       explode: "down",
@@ -352,9 +457,9 @@ export function layersFor(model: ModelKey): LayerSpec[] {
     },
     {
       id: "limited-three-alpha-beta",
-      name: "L + α + β 三相区",
+      name: "L + α + β 三相区 (L + α + β)",
       category: "three",
-      color: 0xf43f5e,
+      color: 0xf43f5e,                     // 三相区：PRD 要求的高亮特征色
       bottom: solidus,
       top: invariantTop!,
       explode: "center",
@@ -362,7 +467,7 @@ export function layersFor(model: ModelKey): LayerSpec[] {
     },
     {
       id: "limited-three-beta-gamma",
-      name: "L + β + γ 三相区",
+      name: "L + β + γ 三相区 (L + β + γ)",
       category: "three",
       color: 0xe83f78,
       bottom: solidus,
@@ -372,7 +477,7 @@ export function layersFor(model: ModelKey): LayerSpec[] {
     },
     {
       id: "limited-three-gamma-alpha",
-      name: "L + γ + α 三相区",
+      name: "L + γ + α 三相区 (L + γ + α)",
       category: "three",
       color: 0xd946a8,
       bottom: solidus,
@@ -382,9 +487,9 @@ export function layersFor(model: ModelKey): LayerSpec[] {
     },
     {
       id: "liquid-alpha",
-      name: "L + α 两相区",
+      name: "L + α 两相区 (L + α)",
       category: "two",
-      color: 0x0a8793,
+      color: PHASE_COLORS.twoPhase,        // L+α 两相
       bottom: invariantTop!,
       top: liquidus,
       explode: "center",
@@ -392,9 +497,9 @@ export function layersFor(model: ModelKey): LayerSpec[] {
     },
     {
       id: "liquid-beta",
-      name: "L + β 两相区",
+      name: "L + β 两相区 (L + β)",
       category: "two",
-      color: 0x087781,
+      color: 0x2dd4bf,                     // L+β 两相
       bottom: invariantTop!,
       top: liquidus,
       explode: "center",
@@ -402,9 +507,9 @@ export function layersFor(model: ModelKey): LayerSpec[] {
     },
     {
       id: "liquid-gamma",
-      name: "L + γ 两相区",
+      name: "L + γ 两相区 (L + γ)",
       category: "two",
-      color: 0x0b6673,
+      color: 0x0d9488,                     // L+γ 两相
       bottom: invariantTop!,
       top: liquidus,
       explode: "center",
@@ -412,9 +517,9 @@ export function layersFor(model: ModelKey): LayerSpec[] {
     },
     {
       id: "liquid",
-      name: "液相区",
+      name: "液相区 (Liquid)",
       category: "single",
-      color: 0x27437f,
+      color: PHASE_COLORS.liquid,          // 液相
       bottom: liquidus,
       top,
       explode: "up",
@@ -422,34 +527,26 @@ export function layersFor(model: ModelKey): LayerSpec[] {
   ];
 }
 
-function smoothStep(value: number) {
-  const t = Math.max(0, Math.min(1, value));
-  return t * t * (3 - 2 * t);
-}
-
+/**
+ * 重心坐标 -> 世界坐标。
+ *
+ * 与参考 demo 一致：不做倒角、不做接缝内缩、不做整体纵向缩放，曲面高度就是相界面函数
+ * 的原值。之前那套 bevel/seamInset/DISPLAY_Y_SCALE 会让相邻相区之间出现可见缝隙，
+ * 也使模型高度与相界面函数不再对应。
+ */
 function sculptedVertex(
-  segments: number,
+  _segments: number,
   u: number,
   v: number,
   w: number,
   bottom: number,
   top: number,
 ) {
-  const boundaryDistance = Math.min(u, v, w);
-  const transitionWidth = 3.75 / segments;
-  const interiorWeight = smoothStep(boundaryDistance / transitionWidth);
-  const bevelWeight = 1 - interiorWeight;
-  const thickness = Math.max(0.02, top - bottom);
-  const seamInset = Math.min(0.1, thickness * 0.1);
-  const verticalBevel = Math.min(0.32, thickness * 0.08) * bevelWeight;
-  const horizontalScale = 1 - 0.034 * bevelWeight;
-  const x = (u * A_VERTEX.x + v * B_VERTEX.x + w * C_VERTEX.x) * horizontalScale;
-  const z = (u * A_VERTEX.z + v * B_VERTEX.z + w * C_VERTEX.z) * horizontalScale;
   return {
-    x,
-    z,
-    bottom: (bottom + seamInset + verticalBevel) * DISPLAY_Y_SCALE,
-    top: (top - seamInset - verticalBevel) * DISPLAY_Y_SCALE,
+    x: u * A_VERTEX.x + v * B_VERTEX.x + w * C_VERTEX.x,
+    z: u * A_VERTEX.z + v * B_VERTEX.z + w * C_VERTEX.z,
+    bottom,
+    top,
   };
 }
 
@@ -651,67 +748,51 @@ function createPhaseBoundaryGeometry(
   return geometry;
 }
 
-function materialProfile(spec: LayerSpec) {
-  if (spec.id === "liquid") {
-    return { shininess: 92, specular: 0xdcefff };
-  }
-  if (spec.category === "three") {
-    return { shininess: 76, specular: 0xffe8ec };
-  }
-  if (spec.category === "two") {
-    return { shininess: 68, specular: 0xd8ffff };
-  }
-  return { shininess: 48, specular: 0xffe2c7 };
-}
+/** 曲面细分段数（demo 的 resolution）。 */
+export const SURFACE_SEGMENTS = 25;
 
 export function createPhaseVisual(
   spec: LayerSpec,
   clippingPlane: THREE.Plane,
   renderIndex: number,
 ): PhaseVisual {
-  const geometry = createPhaseBodyGeometry(46, spec.bottom, spec.top, spec.domain);
+  const geometry = createPhaseBodyGeometry(
+    SURFACE_SEGMENTS,
+    spec.bottom,
+    spec.top,
+    spec.domain,
+  );
   const baseColor = new THREE.Color(spec.color);
-  const mutedColor = baseColor.clone().offsetHSL(0, 0.01, -0.02);
-  const profile = materialProfile(spec);
+  const mutedColor = baseColor.clone();
   const clippingPlanes = [clippingPlane];
 
+  // 材质参数与 demo 完全一致：MeshPhongMaterial + shininess 60 + opacity 0.65，
+  // 双面、不写深度，polygonOffset 10/10 用于压住相界线的深度冲突。
   const frontMaterial = new THREE.MeshPhongMaterial({
-    color: mutedColor,
-    emissive: baseColor.clone().multiplyScalar(0.035),
-    emissiveIntensity: 0.32,
-    shininess: profile.shininess,
-    specular: profile.specular,
+    color: baseColor,
+    shininess: 60,
     transparent: true,
     opacity: DEFAULT_FRONT_OPACITY,
     side: THREE.DoubleSide,
     depthWrite: false,
     polygonOffset: true,
-    polygonOffsetFactor: 1,
-    polygonOffsetUnits: 1,
+    polygonOffsetFactor: 10,
+    polygonOffsetUnits: 10,
     clippingPlanes,
-    clipShadows: true,
   });
 
   const frontMesh = new THREE.Mesh(geometry, frontMaterial);
   frontMesh.name = `${spec.id}-surface`;
   frontMesh.renderOrder = PHASE_BODY_RENDER_ORDER_BASE + renderIndex;
   frontMesh.userData = { id: spec.id, name: spec.name, category: spec.category };
-  frontMesh.castShadow = true;
-  frontMesh.receiveShadow = true;
 
-  const edgeGeometry = createPhaseBoundaryGeometry(
-    46,
-    spec.bottom,
-    spec.top,
-    spec.domain,
-  );
+  // demo 用 EdgesGeometry(geo, 45) 提取折角边：既有相区外轮廓也有相界面的特征线，
+  // 比只画域边界的做法更接近参考实现。
+  const edgeGeometry = new THREE.EdgesGeometry(geometry, 45);
   const edgeMaterial = new THREE.LineBasicMaterial({
-    color: 0xc9ecff,
+    color: 0xffffff,
     transparent: true,
-    opacity: 0.62,
-    depthTest: true,
-    depthWrite: false,
-    fog: false,
+    opacity: DEFAULT_EDGE_OPACITY,
     clippingPlanes,
   });
   const edges = new THREE.LineSegments(edgeGeometry, edgeMaterial);
@@ -747,81 +828,42 @@ export function createPhaseVisual(
 }
 
 export function setPhaseVisualHighlight(visual: PhaseVisual, selectedId: string | null) {
-  if (!selectedId) {
-    visual.frontMaterial.color.copy(visual.mutedColor);
-    visual.frontMaterial.emissive.copy(visual.baseColor).multiplyScalar(0.035);
-    visual.frontMaterial.transparent = true;
-    visual.frontMaterial.opacity = DEFAULT_FRONT_OPACITY;
-    visual.frontMaterial.depthWrite = false;
-    visual.frontMaterial.needsUpdate = true;
-    visual.frontMaterial.emissiveIntensity = 0.32;
-    visual.edgeMaterial.opacity = 0.62;
-    return;
-  }
+  // 三档不透明度与 demo 一致：默认 0.65/边线 0.5，选中 0.85/边线 1.0，其余 0.05/边线 0.1。
+  // 颜色本身不变，只调不透明度，避免选中前后出现色偏。
+  const [front, edge] = !selectedId
+    ? [DEFAULT_FRONT_OPACITY, DEFAULT_EDGE_OPACITY]
+    : visual.id === selectedId
+      ? [SELECTED_FRONT_OPACITY, SELECTED_EDGE_OPACITY]
+      : [DIMMED_FRONT_OPACITY, DIMMED_EDGE_OPACITY];
 
-  if (visual.id === selectedId) {
-    visual.frontMaterial.color.copy(visual.baseColor);
-    visual.frontMaterial.emissive.copy(visual.baseColor).multiplyScalar(0.06);
-    visual.frontMaterial.transparent = true;
-    visual.frontMaterial.opacity = SELECTED_FRONT_OPACITY;
-    visual.frontMaterial.depthWrite = true;
-    visual.frontMaterial.needsUpdate = true;
-    visual.frontMaterial.emissiveIntensity = 0.42;
-    visual.edgeMaterial.opacity = 0.92;
-    return;
-  }
-
-  visual.frontMaterial.color.copy(visual.mutedColor).multiplyScalar(0.58);
-  visual.frontMaterial.emissive.copy(visual.mutedColor).multiplyScalar(0.02);
-  visual.frontMaterial.transparent = true;
-  visual.frontMaterial.opacity = DIMMED_FRONT_OPACITY;
-  visual.frontMaterial.depthWrite = false;
-  visual.frontMaterial.needsUpdate = true;
-  visual.frontMaterial.emissiveIntensity = 0.05;
-  visual.edgeMaterial.opacity = 0.06;
+  visual.frontMaterial.opacity = front;
+  visual.edgeMaterial.opacity = edge;
 }
 
 export function makeReferenceFrame() {
+  // 与 demo 一致：纯白细线、opacity 0.2，只有三棱柱的 9 条棱，不加顶点节点球。
   const vertices = [A_VERTEX, B_VERTEX, C_VERTEX];
   const points: THREE.Vector3[] = [];
   for (let i = 0; i < 3; i += 1) {
     const next = (i + 1) % 3;
     points.push(vertices[i], vertices[next]);
     points.push(
-      vertices[i].clone().setY(DISPLAY_TOP_Y),
-      vertices[next].clone().setY(DISPLAY_TOP_Y),
+      vertices[i].clone().setY(TOP_Y),
+      vertices[next].clone().setY(TOP_Y),
     );
-    points.push(vertices[i], vertices[i].clone().setY(DISPLAY_TOP_Y));
+    points.push(vertices[i], vertices[i].clone().setY(TOP_Y));
   }
   const geometry = new THREE.BufferGeometry().setFromPoints(points);
   const material = new THREE.LineBasicMaterial({
-    color: 0xb8d9f7,
+    color: 0xffffff,
     transparent: true,
-    opacity: 0.3,
-    fog: false,
-    depthWrite: false,
+    opacity: 0.2,
   });
   const lines = new THREE.LineSegments(geometry, material);
   lines.renderOrder = 90;
 
-  const nodeGeometry = new THREE.SphereGeometry(0.105, 16, 10);
-  const nodeMaterial = new THREE.MeshBasicMaterial({
-    color: 0xb8d9f7,
-    transparent: true,
-    opacity: 0.58,
-    depthWrite: false,
-    toneMapped: false,
-  });
   const frame = new THREE.Group();
   frame.add(lines);
-  vertices.forEach((vertex) => {
-    const bottomNode = new THREE.Mesh(nodeGeometry, nodeMaterial);
-    bottomNode.position.copy(vertex);
-    bottomNode.renderOrder = 91;
-    const topNode = bottomNode.clone();
-    topNode.position.y = DISPLAY_TOP_Y;
-    frame.add(bottomNode, topNode);
-  });
   return frame;
 }
 
@@ -854,7 +896,7 @@ export function positionFromComposition(a: number, b: number, temperature: numbe
   const w = c / 100;
   return new THREE.Vector3(
     u * A_VERTEX.x + v * B_VERTEX.x + w * C_VERTEX.x,
-    (temperature / 100) * DISPLAY_TOP_Y,
+    (temperature / 100) * TEMPERATURE_SPAN,
     u * A_VERTEX.z + v * B_VERTEX.z + w * C_VERTEX.z,
   );
 }
@@ -887,22 +929,24 @@ export function phaseAt(
   const u = a / 100;
   const v = b / 100;
   const w = c / 100;
-  const y = (temperature / 100) * TOP_Y;
+  // 与 demo 一致：滑块百分比按 TEMPERATURE_SPAN(15) 换算成物理高度，
+  // 再与相界面函数比较。必须和 positionFromComposition / 等温截面用同一量程。
+  const y = (temperature / 100) * TEMPERATURE_SPAN;
   const { solidus, liquidus, invariantTop, solvus } = surfacesFor(model);
   const low = solidus(u, v, w);
   const high = liquidus(u, v, w);
 
   if (model === "isomorphous") {
-    if (y >= high) return { title: "液相区", detail: "Liquid", meshId: "liquid" };
-    if (y <= low) return { title: "α 固相区", detail: "α", meshId: "alpha-solid" };
+    if (y >= high) return { title: "液相区 (Liquid)", detail: "Liquid", meshId: "liquid" };
+    if (y <= low) return { title: "α 固相区 (α)", detail: "α", meshId: "alpha-solid" };
     return {
-      title: "液相 + α 两相区",
+      title: "液相 + α 两相区 (L + α)",
       detail: "Liquid + α",
       meshId: "liquid-alpha",
     };
   }
 
-  if (y >= high) return { title: "液相区", detail: "Liquid", meshId: "liquid" };
+  if (y >= high) return { title: "液相区 (Liquid)", detail: "Liquid", meshId: "liquid" };
 
   const component = dominantComponent(u, v, w);
   const componentLabel =
@@ -910,7 +954,7 @@ export function phaseAt(
 
   if (model === "limited" && solvus && y <= solvus(u, v, w)) {
     return {
-      title: `${componentLabel} 固溶体`,
+      title: `${componentLabel} 固溶体 (${componentLabel})`,
       detail: `${componentLabel} single-phase solid solution`,
       meshId: `${component}-solution`,
     };
@@ -923,7 +967,7 @@ export function phaseAt(
 
   if (model === "limited" && y <= low) {
     return {
-      title: `${pairLabel} 固态两相区`,
+      title: `${pairLabel} 固态两相区 (${pairLabel})`,
       detail: pairLabel,
       meshId: pair,
     };
@@ -931,7 +975,7 @@ export function phaseAt(
 
   if (model === "eutectic" && y <= low) {
     return {
-      title: `${componentLabel} 固相区`,
+      title: `${componentLabel} 固相区 (${componentLabel})`,
       detail: componentLabel,
       meshId: `${component}-solid`,
     };
@@ -940,13 +984,13 @@ export function phaseAt(
   const threePhaseCeiling = invariantTop?.(u, v, w) ?? low;
   if (y <= threePhaseCeiling) {
     return {
-      title: `L + ${pairLabel} 三相区`,
+      title: `L + ${pairLabel} 三相区 (L + ${pairLabel})`,
       detail: `Liquid + ${pairLabel}`,
       meshId: `${model === "limited" ? "limited" : "eutectic"}-three-${pair}`,
     };
   }
   return {
-    title: `L + ${componentLabel} 两相区`,
+    title: `L + ${componentLabel} 两相区 (L + ${componentLabel})`,
     detail: `Liquid + ${componentLabel}`,
     meshId: `liquid-${component}`,
   };
