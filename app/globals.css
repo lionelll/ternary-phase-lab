@@ -1338,9 +1338,21 @@ kbd {
 .viewport {
   border: 1px solid rgba(115, 152, 196, 0.48);
   border-radius: 9px;
-  background:
-    radial-gradient(circle at 52% 42%, rgba(40, 133, 255, 0.12), transparent 24rem),
-    rgba(5, 13, 22, 0.92);
+  background: #02060b;
+  box-shadow: none;
+}
+
+.viewport::before {
+  display: none;
+}
+
+.legend-swatch {
+  box-shadow: none;
+}
+
+.axis-label {
+  border-color: rgba(148, 163, 184, 0.18);
+  background: rgba(5, 11, 19, 0.66);
   box-shadow: none;
 }
 
@@ -1523,11 +1535,11 @@ kbd {
   }
 
   .left-rail {
-    order: 2;
+    order: 1;
   }
 
   .viewport {
-    order: 1;
+    order: 2;
     height: 620px;
   }
 

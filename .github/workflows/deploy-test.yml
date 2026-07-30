@@ -1,0 +1,74 @@
+name: Deploy dev to test server
+
+on:
+  push:
+    branches:
+      - dev
+  workflow_dispatch:
+
+concurrency:
+  group: ternary-test-deploy
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Build and deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: test
+      url: http://123.57.11.145:8080/ternary/
+    env:
+      DEPLOY_HOST: ${{ secrets.TEST_SERVER_HOST }}
+      DEPLOY_PORT: ${{ secrets.TEST_SERVER_PORT }}
+      DEPLOY_USER: ${{ secrets.TEST_SERVER_USER }}
+      DEPLOY_ROOT: /var/www/ternary-dev
+
+    steps:
+      - name: Check out dev
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build static test package
+        run: npm run build:static
+
+      - name: Prepare deployment archive
+        run: tar -C static-dist -czf "/tmp/ternary-${GITHUB_SHA}.tgz" .
+
+      - name: Configure SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.TEST_SERVER_SSH_KEY }}
+        run: |
+          install -m 700 -d ~/.ssh
+          install -m 600 /dev/null ~/.ssh/id_ed25519
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          ssh-keyscan -p "$DEPLOY_PORT" -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+
+      - name: Upload release
+        run: |
+          scp -P "$DEPLOY_PORT" \
+            "/tmp/ternary-${GITHUB_SHA}.tgz" \
+            scripts/deploy-test.sh \
+            "$DEPLOY_USER@$DEPLOY_HOST:/tmp/"
+
+      - name: Activate release
+        run: |
+          ssh -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \
+            "DEPLOY_ROOT='$DEPLOY_ROOT' bash /tmp/deploy-test.sh '/tmp/ternary-${GITHUB_SHA}.tgz' '$GITHUB_SHA'"
+
+      - name: Verify deployment
+        run: |
+          curl --fail --silent --show-error \
+            --retry 5 --retry-delay 2 \
+            "http://$DEPLOY_HOST:8080/ternary/" > /dev/null
