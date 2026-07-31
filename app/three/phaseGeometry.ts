@@ -1,4 +1,12 @@
 import * as THREE from "three";
+import {
+  REFERENCE_AXIS_TOP_T,
+  REFERENCE_LOW_T,
+  classifyReferencePoint,
+  referenceLayersFor,
+  referenceLiquidus,
+  type RegionGeometrySpec,
+} from "./eutecticModels.ts";
 
 export type ModelKey = "isomorphous" | "eutectic" | "limited";
 export type PhaseCategory = "single" | "two" | "three";
@@ -16,6 +24,7 @@ export type LayerSpec = {
   top: SurfaceFn;
   explode: ExplodeDirection;
   domain?: readonly BarycentricPoint[];
+  geometry?: RegionGeometrySpec;
 };
 
 export type PhaseResult = {
@@ -72,6 +81,22 @@ export const TOP_Y = 14;
  *  所以 100% 时裁剪面在模型之上，等温截面不切到任何东西。 */
 export const TEMPERATURE_SPAN = 15;
 
+/** 将参考站的归一化温度轴映射到当前匀晶模型的 0~TOP_Y 舞台尺寸。 */
+export function referenceTemperatureToWorld(value: number) {
+  return (
+    ((value - REFERENCE_LOW_T) /
+      (REFERENCE_AXIS_TOP_T - REFERENCE_LOW_T)) *
+    TOP_Y
+  );
+}
+
+function worldTemperatureToReference(value: number) {
+  return (
+    REFERENCE_LOW_T +
+    (value / TOP_Y) * (REFERENCE_AXIS_TOP_T - REFERENCE_LOW_T)
+  );
+}
+
 /** A / B / C 三个纯组元的熔点（demo 的 TA / TB / TC）。 */
 export const T_A = 3;
 export const T_B = 7;
@@ -110,111 +135,11 @@ const PAIR_DOMAINS = {
   "gamma-alpha": [[0, 0, 1], [1, 0, 0], CENTER],
 } satisfies Record<string, readonly BarycentricPoint[]>;
 
-function clampHeight(value: number) {
-  return Math.max(0.2, Math.min(TOP_Y - 0.2, value));
-}
-
-function radialFactor(u: number, v: number, w: number) {
-  const squaredDistance =
-    (u - 1 / 3) ** 2 + (v - 1 / 3) ** 2 + (w - 1 / 3) ** 2;
-  return THREE.MathUtils.clamp(squaredDistance / (2 / 3), 0, 1);
-}
-
-function smoothInvariantThickness(gap: number, cap: number) {
-  return cap * (1 - Math.exp(-Math.max(0, gap) / cap));
-}
-
 /** 三顶点熔点的线性插值（demo 的 linearT）。 */
 const linearT: SurfaceFn = (u, v, w) => u * T_A + v * T_B + w * T_C;
 
 /** 组元交互项，越靠三角形中心越大（demo 用 u*v + v*w + w*u）。 */
 const interaction = (u: number, v: number, w: number) => u * v + v * w + w * u;
-
-/* ---- 两个共晶模型的实测参数（归一化高度 × TOP_Y） ---- */
-
-/** 固态不互溶：三顶点熔点，STL 实测归一化 0.876 / 1.000 / 0.936。 */
-const EUTECTIC_MELTING: readonly [number, number, number] = [
-  0.876 * TOP_Y,
-  1.0 * TOP_Y,
-  0.936 * TOP_Y,
-];
-/** 固态不互溶：三相水平反应面高度，STL 实测归一化 0.301。 */
-const EUTECTIC_INVARIANT = 0.301 * TOP_Y;
-/** 三个二元共晶点温度，STL 侧面实测归一化 0.634 / 0.704 / 0.545（分别在 AB / BC / CA 棱上）。 */
-const EUTECTIC_BINARY: readonly [number, number, number] = [
-  0.634 * TOP_Y,
-  0.704 * TOP_Y,
-  0.545 * TOP_Y,
-];
-/** 三相反应层厚度：STL 连通体实测该水平薄板跨 [0.301, 0.321]，即 0.020。 */
-const EUTECTIC_THREE_PHASE_THICKNESS = 0.020 * TOP_Y;
-
-/** 固态有限互溶：三顶点熔点，STL 实测归一化 0.825 / 1.000 / 1.000。 */
-const LIMITED_MELTING: readonly [number, number, number] = [
-  0.825 * TOP_Y,
-  1.0 * TOP_Y,
-  1.0 * TOP_Y,
-];
-/** 固态有限互溶：三相水平反应面高度，STL 实测归一化 0.391。 */
-const LIMITED_INVARIANT = 0.391 * TOP_Y;
-/** 三个二元共晶点温度，STL 侧面实测归一化 0.590 / 0.636 / 0.616。 */
-const LIMITED_BINARY: readonly [number, number, number] = [
-  0.590 * TOP_Y,
-  0.636 * TOP_Y,
-  0.616 * TOP_Y,
-];
-/** 三相反应层厚度：STL 实测该水平薄板跨 [0.391, 0.404]，即 0.013。 */
-const LIMITED_THREE_PHASE_THICKNESS = 0.013 * TOP_Y;
-
-/**
- * 三元共晶的液相面。
- *
- * 由三片曲面组成，每片从对应纯组元的熔点下降，三片沿共晶沟谷相交并汇于三元共晶点 E。
- * 每片写成 T_E + (T_m − T_E)·s，其中 s 是该组元的归一化过量：
- *   s_i = clamp((3·x_i − 1) / 2, 0, 1)
- * 于是顶点处 x=1 → s=1 → 正好等于熔点；形心处 x=1/3 → s=0 → 正好等于 E 的温度，
- * 与 STL 实测「形心上方最低点 = 水平反应面高度」一致。
- * 取三片的最大值：冷却时最先结晶的组元决定液相面，沟谷即两片相交处。
- */
-function makeEutecticLiquidus(
-  melting: readonly [number, number, number],
-  binary: readonly [number, number, number],
-  invariant: number,
-): SurfaceFn {
-  // 液相面由三片组成，每片对应一个先结晶的固相；取三片最大值，
-  // 相交处自然形成三条共晶沟谷 e_iE，三谷汇于形心处的三元共晶点 E。
-  //
-  // 每片写成：T_E + (T_m − T_E)·s，s 是该组元的归一化过量 clamp((3x−1)/2, 0, 1)。
-  // 于是顶点 x=1 → s=1 → 正好是熔点，形心 x=1/3 → s=0 → 正好是 E，与实测吻合。
-  //
-  // 但只有这一项时，棱中点的高度完全由熔点决定，比实测的二元共晶点 e_i 偏低。
-  // 因此再加一个"棱上抬升"修正项：只在某个组元趋近 0（即位于该棱所在的侧面）时生效，
-  // 大小恰好把棱中点从纯插值高度抬到实测的 e_i，进入三角形内部后迅速衰减到 0。
-  const sheet = (x: number, tm: number) =>
-    invariant + (tm - invariant) * Math.max(0, Math.min(1, (3 * x - 1) / 2));
-
-  // 棱 AB（w=0）中点处纯插值给出的高度，用于反推需要的凹陷量。
-  const lift = (tm0: number, tm1: number, te: number) =>
-    te - Math.max(sheet(0.5, tm0), sheet(0.5, tm1));
-
-  const liftAB = lift(melting[0], melting[1], binary[0]);
-  const liftBC = lift(melting[1], melting[2], binary[1]);
-  const liftCA = lift(melting[2], melting[0], binary[2]);
-
-  return (u, v, w) => {
-    const raw = Math.max(
-      sheet(u, melting[0]),
-      sheet(v, melting[1]),
-      sheet(w, melting[2]),
-    );
-    // 凹陷权重：在对应棱上（第三个组元为 0）且远离顶点时最大，进入内部迅速衰减。
-    const weight = (opposite: number, x0: number, x1: number) =>
-      Math.max(0, 1 - 3 * opposite) * 4 * Math.max(0, x0) * Math.max(0, x1);
-    const bump =
-      liftAB * weight(w, u, v) + liftBC * weight(u, v, w) + liftCA * weight(v, w, u);
-    return Math.max(invariant, raw + bump);
-  };
-}
 
 export function surfacesFor(model: ModelKey) {
   if (model === "isomorphous") {
@@ -226,34 +151,34 @@ export function surfacesFor(model: ModelKey) {
     return { solidus, liquidus, invariantTop: undefined, solvus: undefined };
   }
 
-  if (model === "eutectic") {
-    // 参数取自参考 STL《固相不互溶的三元共晶.stl》实测：
-    //   底面正三角形边长 132.5（三边 132.5/132.4/132.5），温度跨度 153
-    //   三顶点熔点归一化 0.876 / 1.000 / 0.936
-    //   三相水平反应面（= 三元共晶点 E 温度）归一化 0.301：三条棱中点与形心的液相面
-    //   最低点全部落在该高度，证实它是贯穿整个三角形的水平面。
-    const solidus: SurfaceFn = () => EUTECTIC_INVARIANT;
-    const liquidus = makeEutecticLiquidus(EUTECTIC_MELTING, EUTECTIC_BINARY, EUTECTIC_INVARIANT);
-    // 固态完全不互溶：反应面以下即 α+β+γ，三相区就是该水平面之上到液相面之间的薄层。
-    const invariantTop: SurfaceFn = (u, v, w) =>
-      Math.min(liquidus(u, v, w) - 0.02, EUTECTIC_INVARIANT + EUTECTIC_THREE_PHASE_THICKNESS);
-    return { solidus, liquidus, invariantTop, solvus: undefined };
-  }
+  // 两类共晶模型的液相面直接取自显式控制网格，避免重新用高度函数拟合后
+  // 丢失共晶沟的弧度、汇聚角和二元共晶点位置。
+  const invariantReference = model === "eutectic" ? 0.28 : 0.32;
+  const solidus: SurfaceFn = () =>
+    referenceTemperatureToWorld(invariantReference);
+  const liquidus: SurfaceFn = (u, v) =>
+    referenceTemperatureToWorld(referenceLiquidus(model, u, v));
+  return {
+    solidus,
+    liquidus,
+    invariantTop: undefined,
+    solvus: undefined,
+  };
 
-  // 固态有限互溶：参数取自《固相有限互溶的三元共晶.stl》实测：
-  //   底面边长 151.7，温度跨度 152，顶点熔点归一化 0.825 / 1.000 / 1.000
-  //   三相水平反应面（E 温度）归一化 0.391
-  // 与不互溶的区别是多一层固溶度边界（solvus），反应面以下不再是纯三相机械混合。
-  const solidus: SurfaceFn = () => LIMITED_INVARIANT;
-  const liquidus = makeEutecticLiquidus(LIMITED_MELTING, LIMITED_BINARY, LIMITED_INVARIANT);
-  const solvus: SurfaceFn = (u, v, w) =>
-    LIMITED_INVARIANT * (0.42 + 0.30 * (1 - radialFactor(u, v, w)));
-  const invariantTop: SurfaceFn = (u, v, w) =>
-    Math.min(liquidus(u, v, w) - 0.02, LIMITED_INVARIANT + LIMITED_THREE_PHASE_THICKNESS);
-  return { solidus, liquidus, invariantTop, solvus };
 }
 
 export function layersFor(model: ModelKey): LayerSpec[] {
+  const referenceSpecs =
+    model === "isomorphous" ? undefined : referenceLayersFor(model);
+  if (referenceSpecs) {
+    const emptySurface: SurfaceFn = () => 0;
+    return referenceSpecs.map((spec) => ({
+      ...spec,
+      bottom: emptySurface,
+      top: emptySurface,
+    }));
+  }
+
   const { solidus, liquidus, invariantTop, solvus } = surfacesFor(model);
   const base: SurfaceFn = () => 0;
   const top: SurfaceFn = () => TOP_Y;
@@ -692,59 +617,67 @@ export function createPhaseBodyGeometry(
   return geometry;
 }
 
-function createPhaseBoundaryGeometry(
-  segments: number,
-  bottomSurface: SurfaceFn,
-  topSurface: SurfaceFn,
-  domain: readonly BarycentricPoint[] = FULL_DOMAIN,
-) {
-  const positions: number[] = [];
+function referencePointToWorld(point: RegionGeometrySpec["vertices"][number]) {
+  const [u, v, w] = point.b;
+  return new THREE.Vector3(
+    u * A_VERTEX.x + v * B_VERTEX.x + w * C_VERTEX.x,
+    referenceTemperatureToWorld(point.t),
+    u * A_VERTEX.z + v * B_VERTEX.z + w * C_VERTEX.z,
+  );
+}
 
-  const sample = (u: number, v: number, w: number) =>
-    sculptedVertex(
-      segments,
-      u,
-      v,
-      w,
-      bottomSurface(u, v, w),
-      topSurface(u, v, w),
-    );
+function createReferenceBodyGeometry(spec: RegionGeometrySpec) {
+  const positions = spec.vertices.flatMap((point) =>
+    referencePointToWorld(point).toArray(),
+  );
+  const indices: number[] = [];
+  const worldVertices = spec.vertices.map(referencePointToWorld);
 
-  const pushSegment = (
-    start: ReturnType<typeof sculptedVertex>,
-    end: ReturnType<typeof sculptedVertex>,
-  ) => {
-    positions.push(
-      start.x,
-      start.top,
-      start.z,
-      end.x,
-      end.top,
-      end.z,
-    );
-  };
-
-  domain.forEach((edgeStart, domainIndex) => {
-    const edgeEnd = domain[(domainIndex + 1) % domain.length];
-    for (let index = 0; index < segments; index += 1) {
-      const startProgress = index / segments;
-      const endProgress = (index + 1) / segments;
-      const start = sample(
-        THREE.MathUtils.lerp(edgeStart[0], edgeEnd[0], startProgress),
-        THREE.MathUtils.lerp(edgeStart[1], edgeEnd[1], startProgress),
-        THREE.MathUtils.lerp(edgeStart[2], edgeEnd[2], startProgress),
-      );
-      const end = sample(
-        THREE.MathUtils.lerp(edgeStart[0], edgeEnd[0], endProgress),
-        THREE.MathUtils.lerp(edgeStart[1], edgeEnd[1], endProgress),
-        THREE.MathUtils.lerp(edgeStart[2], edgeEnd[2], endProgress),
-      );
-      pushSegment(start, end);
+  spec.faces.forEach((face) => {
+    for (let index = 1; index < face.length - 1; index += 1) {
+      const triangle = [face[0], face[index], face[index + 1]] as const;
+      const a = worldVertices[triangle[0]];
+      const b = worldVertices[triangle[1]];
+      const c = worldVertices[triangle[2]];
+      if (
+        a.distanceToSquared(b) < 1e-10 ||
+        b.distanceToSquared(c) < 1e-10 ||
+        c.distanceToSquared(a) < 1e-10 ||
+        b.clone().sub(a).cross(c.clone().sub(a)).lengthSq() < 1e-10
+      ) {
+        continue;
+      }
+      indices.push(...triangle);
     }
   });
 
   const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute(
+    "position",
+    new THREE.Float32BufferAttribute(positions, 3),
+  );
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  geometry.computeBoundingSphere();
+  return geometry;
+}
+
+function createReferenceBoundaryGeometry(spec: RegionGeometrySpec) {
+  if (!spec.edgeSegments?.length) return undefined;
+  const positions: number[] = [];
+  spec.edgeSegments.forEach((segment) => {
+    for (let index = 0; index < segment.length - 1; index += 1) {
+      const start = referencePointToWorld(segment[index]);
+      const end = referencePointToWorld(segment[index + 1]);
+      if (start.distanceToSquared(end) < 1e-10) continue;
+      positions.push(...start.toArray(), ...end.toArray());
+    }
+  });
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute(
+    "position",
+    new THREE.Float32BufferAttribute(positions, 3),
+  );
   return geometry;
 }
 
@@ -756,12 +689,14 @@ export function createPhaseVisual(
   clippingPlane: THREE.Plane,
   renderIndex: number,
 ): PhaseVisual {
-  const geometry = createPhaseBodyGeometry(
-    SURFACE_SEGMENTS,
-    spec.bottom,
-    spec.top,
-    spec.domain,
-  );
+  const geometry = spec.geometry
+    ? createReferenceBodyGeometry(spec.geometry)
+    : createPhaseBodyGeometry(
+        SURFACE_SEGMENTS,
+        spec.bottom,
+        spec.top,
+        spec.domain,
+      );
   const baseColor = new THREE.Color(spec.color);
   const mutedColor = baseColor.clone();
   const clippingPlanes = [clippingPlane];
@@ -788,7 +723,9 @@ export function createPhaseVisual(
 
   // demo 用 EdgesGeometry(geo, 45) 提取折角边：既有相区外轮廓也有相界面的特征线，
   // 比只画域边界的做法更接近参考实现。
-  const edgeGeometry = new THREE.EdgesGeometry(geometry, 45);
+  const edgeGeometry =
+    (spec.geometry && createReferenceBoundaryGeometry(spec.geometry)) ||
+    new THREE.EdgesGeometry(geometry, 45);
   const edgeMaterial = new THREE.LineBasicMaterial({
     color: 0xffffff,
     transparent: true,
@@ -901,24 +838,6 @@ export function positionFromComposition(a: number, b: number, temperature: numbe
   );
 }
 
-function dominantComponent(u: number, v: number, w: number) {
-  if (u >= v && u >= w) return "alpha" as const;
-  if (v >= u && v >= w) return "beta" as const;
-  return "gamma" as const;
-}
-
-function dominantPair(u: number, v: number, w: number) {
-  if (w <= u && w <= v) return "alpha-beta" as const;
-  if (u <= v && u <= w) return "beta-gamma" as const;
-  return "gamma-alpha" as const;
-}
-
-const PAIR_LABELS: Record<ReturnType<typeof dominantPair>, string> = {
-  "alpha-beta": "α + β",
-  "beta-gamma": "β + γ",
-  "gamma-alpha": "γ + α",
-};
-
 export function phaseAt(
   model: ModelKey,
   a: number,
@@ -932,7 +851,7 @@ export function phaseAt(
   // 与 demo 一致：滑块百分比按 TEMPERATURE_SPAN(15) 换算成物理高度，
   // 再与相界面函数比较。必须和 positionFromComposition / 等温截面用同一量程。
   const y = (temperature / 100) * TEMPERATURE_SPAN;
-  const { solidus, liquidus, invariantTop, solvus } = surfacesFor(model);
+  const { solidus, liquidus } = surfacesFor(model);
   const low = solidus(u, v, w);
   const high = liquidus(u, v, w);
 
@@ -946,53 +865,36 @@ export function phaseAt(
     };
   }
 
-  if (y >= high) return { title: "液相区 (Liquid)", detail: "Liquid", meshId: "liquid" };
-
-  const component = dominantComponent(u, v, w);
-  const componentLabel =
-    component === "alpha" ? "α" : component === "beta" ? "β" : "γ";
-
-  if (model === "limited" && solvus && y <= solvus(u, v, w)) {
-    return {
-      title: `${componentLabel} 固溶体 (${componentLabel})`,
-      detail: `${componentLabel} single-phase solid solution`,
-      meshId: `${component}-solution`,
-    };
-  }
-
-  // 三相区与固态两相区必须用同一套分区判据（dominantPair），否则同一成分降温时
-  // 会出现"L + α + β 三相区"下方接"γ + α 固态两相区"这类组元不守恒的结果。
-  const pair = dominantPair(u, v, w);
-  const pairLabel = PAIR_LABELS[pair];
-
-  if (model === "limited" && y <= low) {
-    return {
-      title: `${pairLabel} 固态两相区 (${pairLabel})`,
-      detail: pairLabel,
-      meshId: pair,
-    };
-  }
-
-  if (model === "eutectic" && y <= low) {
-    return {
-      title: `${componentLabel} 固相区 (${componentLabel})`,
-      detail: componentLabel,
-      meshId: `${component}-solid`,
-    };
-  }
-
-  const threePhaseCeiling = invariantTop?.(u, v, w) ?? low;
-  if (y <= threePhaseCeiling) {
-    return {
-      title: `L + ${pairLabel} 三相区 (L + ${pairLabel})`,
-      detail: `Liquid + ${pairLabel}`,
-      meshId: `${model === "limited" ? "limited" : "eutectic"}-three-${pair}`,
-    };
-  }
+  const referenceLayer = classifyReferencePoint(
+    model,
+    u,
+    v,
+    worldTemperatureToReference(y),
+  );
+  const detailById: Record<string, string> = {
+    liquid: "Liquid",
+    "liquid-alpha": "Liquid + α",
+    "liquid-beta": "Liquid + β",
+    "liquid-gamma": "Liquid + γ",
+    "alpha-solution": "α",
+    "beta-solution": "β",
+    "gamma-solution": "γ",
+    "alpha-beta": "α + β",
+    "beta-gamma": "β + γ",
+    "gamma-alpha": "γ + α",
+    "eutectic-solid-three": "α + β + γ",
+    "limited-solid-three": "α + β + γ",
+    "eutectic-three-alpha-beta": "Liquid + α + β",
+    "eutectic-three-beta-gamma": "Liquid + β + γ",
+    "eutectic-three-gamma-alpha": "Liquid + γ + α",
+    "limited-three-alpha-beta": "Liquid + α + β",
+    "limited-three-beta-gamma": "Liquid + β + γ",
+    "limited-three-gamma-alpha": "Liquid + γ + α",
+  };
   return {
-    title: `L + ${componentLabel} 两相区 (L + ${componentLabel})`,
-    detail: `Liquid + ${componentLabel}`,
-    meshId: `liquid-${component}`,
+    title: referenceLayer.name,
+    detail: detailById[referenceLayer.id] ?? referenceLayer.name,
+    meshId: referenceLayer.id,
   };
 }
 
