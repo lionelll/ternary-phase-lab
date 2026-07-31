@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import {
   REFERENCE_AXIS_TOP_T,
+  REFERENCE_CONTROL_POINTS,
   REFERENCE_LOW_T,
   classifyReferencePoint,
   referenceLayersFor,
@@ -47,7 +48,8 @@ export type PhaseVisual = {
   mutedColor: THREE.Color;
   /** 几何体包围球中心（局部坐标），用于按相机深度做半透明排序。 */
   centroid: THREE.Vector3;
-  targetY: number;
+  targetPosition: THREE.Vector3;
+  targetScale: number;
 };
 
 /**
@@ -71,15 +73,17 @@ export const SELECTED_EDGE_OPACITY = 1;
 export const DIMMED_EDGE_OPACITY = 0.1;
 
 export const L = 20;
+/** 仅拉伸温度轴，底面等边三角形宽度保持不变。 */
+export const HEIGHT_SCALE = 1.2;
 export const A_VERTEX = new THREE.Vector3(-L / 2, 0, (Math.sqrt(3) * L) / 6);
 export const B_VERTEX = new THREE.Vector3(L / 2, 0, (Math.sqrt(3) * L) / 6);
 export const C_VERTEX = new THREE.Vector3(0, 0, (-Math.sqrt(3) * L) / 3);
 
 /** 相区实体的顶面高度（demo 的 topY）。 */
-export const TOP_Y = 14;
+export const TOP_Y = 14 * HEIGHT_SCALE;
 /** 温度轴量程：滑块 0~100% 线性映射到 0~15（demo 的 physicalVal）。略高于 TOP_Y，
  *  所以 100% 时裁剪面在模型之上，等温截面不切到任何东西。 */
-export const TEMPERATURE_SPAN = 15;
+export const TEMPERATURE_SPAN = 15 * HEIGHT_SCALE;
 
 /** 将参考站的归一化温度轴映射到当前匀晶模型的 0~TOP_Y 舞台尺寸。 */
 export function referenceTemperatureToWorld(value: number) {
@@ -98,12 +102,12 @@ function worldTemperatureToReference(value: number) {
 }
 
 /** A / B / C 三个纯组元的熔点（demo 的 TA / TB / TC）。 */
-export const T_A = 3;
-export const T_B = 7;
-export const T_C = 11;
+export const T_A = 3 * HEIGHT_SCALE;
+export const T_B = 7 * HEIGHT_SCALE;
+export const T_C = 11 * HEIGHT_SCALE;
 
-export const DEFAULT_CAMERA_POSITION = new THREE.Vector3(28, 20, 32);
-export const DEFAULT_CAMERA_TARGET = new THREE.Vector3(0, 6.5, 0);
+export const DEFAULT_CAMERA_POSITION = new THREE.Vector3(28, 22, 32);
+export const DEFAULT_CAMERA_TARGET = new THREE.Vector3(0, 6.5 * HEIGHT_SCALE, 0);
 export const CAMERA_FOV = 45;
 
 /** 相区配色（demo 原值）。 */
@@ -145,9 +149,12 @@ export function surfacesFor(model: ModelKey) {
   if (model === "isomorphous") {
     // 与 demo 完全一致：固相线在熔点连线下凹，液相线上凸并截顶于 13.5。
     const solidus: SurfaceFn = (u, v, w) =>
-      linearT(u, v, w) - 7.5 * interaction(u, v, w);
+      linearT(u, v, w) - 7.5 * HEIGHT_SCALE * interaction(u, v, w);
     const liquidus: SurfaceFn = (u, v, w) =>
-      Math.min(13.5, linearT(u, v, w) + 7.5 * interaction(u, v, w));
+      Math.min(
+        13.5 * HEIGHT_SCALE,
+        linearT(u, v, w) + 7.5 * HEIGHT_SCALE * interaction(u, v, w),
+      );
     return { solidus, liquidus, invariantTop: undefined, solvus: undefined };
   }
 
@@ -172,11 +179,13 @@ export function layersFor(model: ModelKey): LayerSpec[] {
     model === "isomorphous" ? undefined : referenceLayersFor(model);
   if (referenceSpecs) {
     const emptySurface: SurfaceFn = () => 0;
-    return referenceSpecs.map((spec) => ({
-      ...spec,
-      bottom: emptySurface,
-      top: emptySurface,
-    }));
+    return referenceSpecs
+      .filter((spec) => spec.id !== "liquid")
+      .map((spec) => ({
+        ...spec,
+        bottom: emptySurface,
+        top: emptySurface,
+      }));
   }
 
   const { solidus, liquidus, invariantTop, solvus } = surfacesFor(model);
@@ -202,15 +211,6 @@ export function layersFor(model: ModelKey): LayerSpec[] {
         bottom: solidus,
         top: liquidus,
         explode: "center",
-      },
-      {
-        id: "liquid",
-        name: "液相区 (Liquid)",
-        category: "single",
-        color: PHASE_COLORS.liquid,
-        bottom: liquidus,
-        top,
-        explode: "up",
       },
     ];
   }
@@ -743,7 +743,8 @@ export function createPhaseVisual(
     name: spec.name,
     category: spec.category,
     explode: spec.explode,
-    targetY: 0,
+    targetPosition: new THREE.Vector3(),
+    targetScale: 1,
   };
   root.add(frontMesh, edges);
 
@@ -760,7 +761,8 @@ export function createPhaseVisual(
     baseColor,
     mutedColor,
     centroid: (geometry.boundingSphere?.center ?? new THREE.Vector3()).clone(),
-    targetY: 0,
+    targetPosition: new THREE.Vector3(),
+    targetScale: 1,
   };
 }
 
@@ -834,6 +836,18 @@ export function positionFromComposition(a: number, b: number, temperature: numbe
   return new THREE.Vector3(
     u * A_VERTEX.x + v * B_VERTEX.x + w * C_VERTEX.x,
     (temperature / 100) * TEMPERATURE_SPAN,
+    u * A_VERTEX.z + v * B_VERTEX.z + w * C_VERTEX.z,
+  );
+}
+
+/** 两类共晶相图三条共晶沟汇聚的三元共晶点。 */
+export function invariantPointPosition(model: ModelKey) {
+  if (model === "isomorphous") return null;
+  const point = REFERENCE_CONTROL_POINTS[model].ternary;
+  const [u, v, w] = point.b;
+  return new THREE.Vector3(
+    u * A_VERTEX.x + v * B_VERTEX.x + w * C_VERTEX.x,
+    referenceTemperatureToWorld(point.t),
     u * A_VERTEX.z + v * B_VERTEX.z + w * C_VERTEX.z,
   );
 }

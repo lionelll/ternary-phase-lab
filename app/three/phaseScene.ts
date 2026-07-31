@@ -20,6 +20,7 @@ import {
   type PhaseVisual,
   createPhaseVisual,
   disposeObject,
+  invariantPointPosition,
   layersFor,
   makeReferenceFrame,
   makeSliceGeometry,
@@ -51,6 +52,7 @@ export type PhaseSceneController = {
   setHighlight: (phaseId: string | null) => void;
   setPoint: (position: THREE.Vector3) => void;
   clearPoint: () => void;
+  setTopView: () => void;
   resetView: () => void;
   dispose: () => void;
 };
@@ -98,6 +100,19 @@ function makeProbePoint() {
   return point;
 }
 
+function makeInvariantPoint() {
+  const material = new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    depthTest: false,
+    depthWrite: false,
+  });
+  const point = new THREE.Mesh(new THREE.SphereGeometry(0.23, 24, 24), material);
+  point.renderOrder = 998;
+  point.frustumCulled = false;
+  point.visible = false;
+  return point;
+}
+
 export function createPhaseScene({
   host,
   initialModel,
@@ -131,15 +146,15 @@ export function createPhaseScene({
   controls.target.copy(DEFAULT_CAMERA_TARGET);
   controls.minDistance = 24;
   controls.maxDistance = 90;
-  controls.minPolarAngle = 0.28;
-  controls.maxPolarAngle = Math.PI / 2 - 0.04;
+  controls.minPolarAngle = 0.06;
+  controls.maxPolarAngle = Math.PI - 0.06;
   controls.screenSpacePanning = true;
 
   // 允许右键平移把视点移出模型中心，但不允许把模型平移到视野之外。
   // 范围取模型自身尺寸，成分探测点（x/z 最大 ±11.5，y ∈ [0, TEMPERATURE_SPAN]）也落在其中，
   // 所以视角追踪不会被截断。
-  /** 爆炸视图的上下位移量（demo 的 gsap 目标值）。 */
-  const EXPLODE_OFFSET = 3;
+  /** 相区沿环向、径向和高度方向同时分离，确保每个相区都能独立观察。 */
+  const EXPLODE_VERTICAL_STEP = 2.5;
 
   const TARGET_LIMIT_XZ = 12;
   const TARGET_LIMIT_Y_MIN = 0;
@@ -186,6 +201,10 @@ export function createPhaseScene({
   probePoint.traverse((object) => object.layers.set(1));
   camera.layers.enable(1);
   scene.add(probePoint);
+
+  const invariantPoint = makeInvariantPoint();
+  invariantPoint.traverse((object) => object.layers.set(1));
+  scene.add(invariantPoint);
 
   // 后期只保留抗锯齿：SMAA 让相界线在半透明面上依然平滑（PRD 四.2 的要求）。
   // 不加 SSAO —— 相区体是半透明的，屏幕空间环境光遮蔽会在透明面之间算出错误的暗带。
@@ -319,8 +338,19 @@ export function createPhaseScene({
 
   function rebuild(model: ModelKey) {
     disposeVisuals();
-    phaseVisuals = layersFor(model).map((spec, index) => {
+    const specs = layersFor(model);
+    const explodeRadius = THREE.MathUtils.clamp(specs.length * 1.9, 8, 17);
+    const explodeScale = specs.length >= 10 ? 0.34 : specs.length >= 6 ? 0.48 : 0.65;
+    phaseVisuals = specs.map((spec, index) => {
       const visual = createPhaseVisual(spec, slicePlane, index + 1);
+      const angle = (index / Math.max(1, specs.length)) * Math.PI * 2 - Math.PI / 2;
+      const verticalBand = (index % 3) - 1;
+      visual.targetPosition.set(
+        Math.cos(angle) * explodeRadius,
+        verticalBand * EXPLODE_VERTICAL_STEP,
+        Math.sin(angle) * explodeRadius,
+      );
+      visual.targetScale = explodeScale;
       phaseGroup.add(visual.root);
       return visual;
     });
@@ -328,6 +358,9 @@ export function createPhaseScene({
       phaseVisuals.map((visual) => [visual.id, true]),
     );
     probePoint.visible = false;
+    const invariantPosition = invariantPointPosition(model);
+    invariantPoint.visible = invariantPosition !== null;
+    if (invariantPosition) invariantPoint.position.copy(invariantPosition);
     trackTarget(DEFAULT_CAMERA_TARGET);
     setHighlight(null);
     onPhaseSelect(null);
@@ -349,14 +382,10 @@ export function createPhaseScene({
     frame.visible = !exploded;
     slice.visible = !exploded && temperature < 100;
     phaseVisuals.forEach((visual) => {
-      visual.targetY = exploded
-        ? visual.explode === "up"
-          ? EXPLODE_OFFSET
-          : visual.explode === "down"
-            ? -EXPLODE_OFFSET
-            : 0
-        : 0;
-      visual.root.userData.targetY = visual.targetY;
+      visual.root.userData.targetPosition = exploded
+        ? visual.targetPosition.clone()
+        : new THREE.Vector3();
+      visual.root.userData.targetScale = exploded ? visual.targetScale : 1;
     });
   }
 
@@ -388,17 +417,30 @@ export function createPhaseScene({
     trackTarget(DEFAULT_CAMERA_TARGET);
   }
 
+  function setTopView() {
+    const target = new THREE.Vector3(0, TOP_Y * 0.5, 0);
+    controls.target.copy(target);
+    desiredTarget.copy(target);
+    trackingTarget = false;
+    camera.position.set(target.x, target.y + 45, target.z + 0.001);
+    camera.up.set(0, 1, 0);
+    controls.update();
+    emitVertexLabels(true);
+  }
+
   function resetView() {
     camera.position.copy(DEFAULT_CAMERA_POSITION);
+    camera.up.set(0, 1, 0);
     controls.target.copy(DEFAULT_CAMERA_TARGET);
     desiredTarget.copy(DEFAULT_CAMERA_TARGET);
     trackingTarget = false;
     currentExploded = false;
     probePoint.visible = false;
     phaseVisuals.forEach((visual) => {
-      visual.targetY = 0;
-      visual.root.position.y = 0;
-      visual.root.userData.targetY = 0;
+      visual.root.position.set(0, 0, 0);
+      visual.root.scale.setScalar(1);
+      visual.root.userData.targetPosition = new THREE.Vector3();
+      visual.root.userData.targetScale = 1;
     });
     renderer.localClippingEnabled = true;
     frame.visible = true;
@@ -459,7 +501,11 @@ export function createPhaseScene({
     animationFrame = requestAnimationFrame(animate);
 
     phaseVisuals.forEach((visual) => {
-      visual.root.position.y += (visual.targetY - visual.root.position.y) * 0.09;
+      const target = visual.root.userData.targetPosition as THREE.Vector3;
+      visual.root.position.lerp(target, 0.09);
+      const targetScale = visual.root.userData.targetScale as number;
+      const scale = THREE.MathUtils.lerp(visual.root.scale.x, targetScale, 0.09);
+      visual.root.scale.setScalar(scale);
     });
 
     if (trackingTarget) {
@@ -499,6 +545,7 @@ export function createPhaseScene({
     setHighlight,
     setPoint,
     clearPoint,
+    setTopView,
     resetView,
     dispose() {
       disposed = true;
@@ -511,6 +558,7 @@ export function createPhaseScene({
       disposeObject(frame);
       disposeObject(slice);
       disposeObject(probePoint);
+      disposeObject(invariantPoint);
       composer.dispose();
       renderer.dispose();
       renderer.domElement.remove();

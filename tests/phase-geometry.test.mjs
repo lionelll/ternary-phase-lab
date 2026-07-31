@@ -3,10 +3,13 @@ import test from "node:test";
 
 import {
   layersFor,
+  invariantPointPosition,
   phaseAt,
   positionFromComposition,
   referenceTemperatureToWorld,
   surfacesFor,
+  TEMPERATURE_SPAN,
+  TOP_Y,
 } from "../app/three/phaseGeometry.ts";
 import {
   REFERENCE_CONTROL_POINTS,
@@ -15,7 +18,7 @@ import {
 
 const MODELS = ["isomorphous", "eutectic", "limited"];
 
-test("composition analysis only returns rendered phase ids", () => {
+test("composition analysis returns rendered phase ids except the intentionally hidden liquid phase", () => {
   for (const model of MODELS) {
     const renderedIds = new Set(layersFor(model).map((layer) => layer.id));
     for (let a = 0; a <= 100; a += 10) {
@@ -23,12 +26,52 @@ test("composition analysis only returns rendered phase ids", () => {
         for (let temperature = 0; temperature <= 100; temperature += 5) {
           const result = phaseAt(model, a, b, temperature);
           assert.ok(
-            renderedIds.has(result.meshId),
+            renderedIds.has(result.meshId) || result.meshId === "liquid",
             `${model} returned non-rendered phase ${result.meshId}`,
           );
         }
       }
     }
+  }
+});
+
+test("pure liquid bodies are hidden in all three models", () => {
+  for (const model of MODELS) {
+    assert.equal(
+      layersFor(model).some((layer) => layer.id === "liquid"),
+      false,
+    );
+  }
+});
+
+test("temperature axis is stretched by twenty percent without changing composition coordinates", () => {
+  assert.equal(TOP_Y, 16.8);
+  assert.equal(TEMPERATURE_SPAN, 18);
+});
+
+test("both eutectic models expose a finite visible ternary invariant point", () => {
+  for (const model of ["eutectic", "limited"]) {
+    const point = invariantPointPosition(model);
+    assert.ok(point);
+    assert.ok([point.x, point.y, point.z].every(Number.isFinite));
+  }
+  assert.equal(invariantPointPosition("isomorphous"), null);
+});
+
+test("three-phase guide lines keep shared boundaries without closed triangular ties", () => {
+  for (const layer of referenceLayersFor("limited").filter((item) =>
+    item.id.startsWith("limited-three-"),
+  )) {
+    assert.equal(layer.geometry.edgeSegments.length, 3);
+  }
+  for (const layer of referenceLayersFor("eutectic").filter((item) =>
+    item.id.startsWith("eutectic-three-"),
+  )) {
+    assert.equal(layer.geometry.edgeSegments.length, 5);
+    assert.deepEqual(
+      layer.geometry.edgeSegments.slice(-2).map((segment) => segment.length),
+      [2, 2],
+    );
   }
 });
 
@@ -132,10 +175,10 @@ test("liquidus meets each model's exact ternary eutectic point", () => {
   }
 });
 
-test("isomorphous model data and composition coordinates remain unchanged", () => {
+test("isomorphous composition topology remains unchanged", () => {
   assert.deepEqual(
     layersFor("isomorphous").map((item) => item.id),
-    ["alpha-solid", "liquid-alpha", "liquid"],
+    ["alpha-solid", "liquid-alpha"],
   );
   assert.equal(phaseAt("isomorphous", 30, 40, 50).meshId, "liquid-alpha");
 

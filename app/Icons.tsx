@@ -18,3 +18,24 @@ export function HomeIcon(props: SVGProps<SVGSVGElement>) {
     </svg>
   );
 }
+
+export function TopViewIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      {...props}
+    >
+      <path d="M12 3v11" />
+      <path d="m8 10 4 4 4-4" />
+      <path d="M4 18h16" />
+      <path d="m6.5 21-2.5-3 2.5-3" />
+      <path d="m17.5 15 2.5 3-2.5 3" />
+    </svg>
+  );
+}

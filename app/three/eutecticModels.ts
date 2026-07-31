@@ -376,26 +376,12 @@ function cotecticGeometry(
     [0, 1, 2],
     [at(rowCount - 1, 0), at(rowCount - 1, 2), at(rowCount - 1, 1)],
   );
-  const tieRows = [
-    0,
-    Math.floor((rowCount - 1) * 0.34),
-    Math.floor((rowCount - 1) * 0.67),
-    rowCount - 1,
-  ];
   return {
     vertices,
     faces,
-    edgeSegments: [
-      first,
-      liquid,
-      second,
-      ...tieRows.map((row) => [
-        first[row],
-        liquid[row],
-        second[row],
-        first[row],
-      ]),
-    ],
+    // 只保留与相邻 L+α / L+β / L+γ 两相区共用的三条实体边界。
+    // 旧实现额外绘制闭合 tie-line 三角形，俯视时会形成用户指出的尖锐三角杂线。
+    edgeSegments: [first, liquid, second],
   };
 }
 
@@ -405,13 +391,20 @@ function immiscibleCotecticGeometry(
   secondAxis: number,
 ): MutableGeometry {
   const curve = resampleCurve(curveSource, 28);
+  const firstBoundary = curve.map((item) =>
+    point(axisBary(firstAxis), item.t),
+  );
+  const secondBoundary = curve.map((item) =>
+    point(axisBary(secondAxis), item.t),
+  );
   const vertices: BarycentricPoint4[] = [];
   const faces: number[][] = [];
-  for (const curvePoint of curve) {
+  for (let index = 0; index < curve.length; index += 1) {
+    const curvePoint = curve[index];
     vertices.push(
-      point(axisBary(firstAxis), curvePoint.t),
+      firstBoundary[index],
       curvePoint,
-      point(axisBary(secondAxis), curvePoint.t),
+      secondBoundary[index],
     );
   }
   const at = (row: number, offset: number) => row * 3 + offset;
@@ -431,8 +424,12 @@ function immiscibleCotecticGeometry(
     faces,
     edgeSegments: [
       curve,
-      curve.map((item) => point(axisBary(firstAxis), item.t)),
-      curve.map((item) => point(axisBary(secondAxis), item.t)),
+      firstBoundary,
+      secondBoundary,
+      // 三相区在二元共晶端与三元共晶端均以一条连续实线封口，
+      // 与两侧相邻的液-固两相区边界首尾相接。
+      [firstBoundary[0], secondBoundary[0]],
+      [firstBoundary[firstBoundary.length - 1], secondBoundary[secondBoundary.length - 1]],
     ],
   };
 }
@@ -603,6 +600,12 @@ function makeImmiscibleModel() {
     upperBow: 0.018,
     lowerBow: -0.006,
   };
+  const gammaPrimaryOptions = {
+    ...primaryOptions,
+    // L+γ 顶界面加大向上拱起的曲率，避免侧视时近似平直。
+    upperPower: 1.5,
+    upperBow: 0.046,
+  };
   const alpha = makeRuledVolume(
     point([1, 0, 0], 0.94),
     point([1, 0, 0], invariant),
@@ -622,7 +625,7 @@ function makeImmiscibleModel() {
     point([0, 0, 1], invariant),
     boundaries.gamma,
     pureBoundary(2),
-    primaryOptions,
+    gammaPrimaryOptions,
   );
   const outerEdges = [
     combineRadials(alpha.upperPatch.endRadial, beta.upperPatch.startRadial),

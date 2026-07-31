@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { brandLogo } from "./brandLogo";
-import { HomeIcon } from "./Icons";
+import { HomeIcon, TopViewIcon } from "./Icons";
 import {
   type ModelKey,
   type PhaseCategory,
@@ -245,6 +245,15 @@ export default function TernaryLab() {
           <button
             className="top-action-button"
             type="button"
+            onClick={() => sceneController.current?.setTopView()}
+            title="从正上方观察当前等温截面"
+          >
+            <TopViewIcon />
+            <span>俯视视角</span>
+          </button>
+          <button
+            className="top-action-button"
+            type="button"
             onClick={resetAll}
             title="恢复相机视角、等温截面、爆炸视图与相区可见性"
           >
@@ -317,7 +326,7 @@ export default function TernaryLab() {
               <span className="button-icon" aria-hidden="true">↕</span>
               <span>
                 <strong>{exploded ? "复原视图" : "爆炸视图"}</strong>
-                <small>{exploded ? "重新合并各相区" : "拆解上下相区结构"}</small>
+                <small>{exploded ? "重新合并各相区" : "向四周拆分各相区"}</small>
               </span>
               <span className="button-state">{exploded ? "ON" : "OFF"}</span>
             </button>
@@ -448,7 +457,6 @@ export default function TernaryLab() {
           </div>
 
           <div className="phase-legend">
-            <span><i className="legend-swatch liquid" /> 液相</span>
             <span><i className="legend-swatch two" /> 两相</span>
             <span><i className="legend-swatch solid" /> 固相</span>
             {model !== "isomorphous" && (
