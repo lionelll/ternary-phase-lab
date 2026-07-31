@@ -28,14 +28,42 @@ temporary_link="$deploy_root/current.$release_id"
 mkdir -p "$release_dir"
 tar -xzf "$archive_path" -C "$release_dir"
 
-if [[ ! -f "$release_dir/index.html" || ! -d "$release_dir/assets" ]]; then
-  echo "Release validation failed: index.html or assets directory is missing" >&2
+if [[ ! -s "$release_dir/index.html" \
+  || ! -s "$release_dir/release.json" \
+  || ! -s "$release_dir/REVISION" \
+  || ! -d "$release_dir/assets" ]]; then
+  echo "Release validation failed: required files are missing" >&2
   exit 1
 fi
 
-ln -sfn "$release_dir" "$temporary_link"
+if ! find "$release_dir/assets" -maxdepth 1 -type f -name '*.js' -size +100k | grep -q . \
+  || ! find "$release_dir/assets" -maxdepth 1 -type f -name '*.css' -size +1k | grep -q .; then
+  echo "Release validation failed: JavaScript or CSS bundle is missing" >&2
+  exit 1
+fi
+
+if [[ "$(cat "$release_dir/REVISION")" != "$release_id" ]] \
+  || ! grep -Fq "\"commit\":\"$release_id\"" "$release_dir/release.json"; then
+  echo "Release metadata does not match the requested commit" >&2
+  exit 1
+fi
+
+nginx -t
+
+ln -sfn "releases/$release_id" "$temporary_link"
 mv -Tf "$temporary_link" "$deploy_root/current"
+if [[ "$(readlink "$deploy_root/current")" != "releases/$release_id" ]]; then
+  echo "Release activation failed" >&2
+  exit 1
+fi
+
+curl --fail --silent --show-error \
+  --retry 5 --retry-delay 1 \
+  "http://127.0.0.1:8080/ternary/release.json" \
+  | grep --fixed-strings "\"commit\":\"$release_id\"" > /dev/null
+
 rm -f "$archive_path"
+rm -f /tmp/deploy-test.sh
 
 mapfile -t old_releases < <(
   find "$deploy_root/releases" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' \
