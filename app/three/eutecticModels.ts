@@ -397,16 +397,6 @@ function immiscibleCotecticGeometry(
   const secondBoundary = curve.map((item) =>
     point(axisBary(secondAxis), item.t),
   );
-  const thickness = Math.max(0.018, (curve[0].t - curve[curve.length - 1].t) * 0.3);
-  const lowerCurve = curve.map((item) =>
-    point(item.b, Math.max(REFERENCE_LOW_T, item.t - thickness)),
-  );
-  const lowerFirstBoundary = lowerCurve.map((item) =>
-    point(axisBary(firstAxis), item.t),
-  );
-  const lowerSecondBoundary = lowerCurve.map((item) =>
-    point(axisBary(secondAxis), item.t),
-  );
   const vertices: BarycentricPoint4[] = [];
   const faces: number[][] = [];
   for (let index = 0; index < curve.length; index += 1) {
@@ -414,29 +404,20 @@ function immiscibleCotecticGeometry(
       firstBoundary[index],
       curve[index],
       secondBoundary[index],
-      lowerFirstBoundary[index],
-      lowerCurve[index],
-      lowerSecondBoundary[index],
     );
   }
-  const at = (row: number, offset: number) => row * 6 + offset;
+  const at = (row: number, offset: number) => row * 3 + offset;
   for (let row = 0; row < curve.length - 1; row += 1) {
     faces.push(
       [at(row, 0), at(row + 1, 0), at(row + 1, 1), at(row, 1)],
       [at(row, 1), at(row + 1, 1), at(row + 1, 2), at(row, 2)],
-      // 下移点只用于撑开外侧壁；不再生成第二套底面。
-      // 透明渲染时这两块底面会与上表面重合，形成用户圈出的重复区域。
-      [at(row, 0), at(row, 3), at(row + 1, 3), at(row + 1, 0)],
-      [at(row, 2), at(row + 1, 2), at(row + 1, 5), at(row, 5)],
+      [at(row, 2), at(row + 1, 2), at(row + 1, 0), at(row, 0)],
     );
   }
   faces.push(
-    [0, 1, 2, 5, 4, 3],
+    [0, 1, 2],
     [
       at(curve.length - 1, 0),
-      at(curve.length - 1, 3),
-      at(curve.length - 1, 4),
-      at(curve.length - 1, 5),
       at(curve.length - 1, 2),
       at(curve.length - 1, 1),
     ],
@@ -444,19 +425,9 @@ function immiscibleCotecticGeometry(
   return {
     vertices,
     faces,
-    edgeSegments: [
-      curve,
-      firstBoundary,
-      secondBoundary,
-      // 删除重复底面的左右两条纵向边；保留端部下边线作为加宽后的外轮廓。
-      [firstBoundary[0], secondBoundary[0]],
-      [lowerFirstBoundary[0], lowerSecondBoundary[0]],
-      [firstBoundary[firstBoundary.length - 1], secondBoundary[secondBoundary.length - 1]],
-      [
-        lowerFirstBoundary[lowerFirstBoundary.length - 1],
-        lowerSecondBoundary[lowerSecondBoundary.length - 1],
-      ],
-    ],
+    // 端部三角面继续封闭几何体，但不把端部边画成可见引导线，
+    // 避免与三条纵向共享边界组成尖锐的闭合 tie-line 三角形。
+    edgeSegments: [curve, firstBoundary, secondBoundary],
   };
 }
 
