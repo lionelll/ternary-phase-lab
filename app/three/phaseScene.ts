@@ -25,6 +25,7 @@ import {
   makeReferenceFrame,
   makeSliceGeometry,
   setPhaseVisualHighlight,
+  setPhaseVisualPathHighlight,
 } from "./phaseGeometry";
 
 /**
@@ -50,8 +51,8 @@ export type PhaseSceneController = {
   setFilters: (filters: Record<PhaseCategory, boolean>) => void;
   setPhaseVisibility: (visibility: Record<string, boolean>) => void;
   setHighlight: (phaseId: string | null) => void;
-  setPoint: (position: THREE.Vector3) => void;
-  clearPoint: () => void;
+  setCompositionPath: (position: THREE.Vector3, phaseIds: string[]) => void;
+  clearCompositionPath: () => void;
   setTopView: () => void;
   resetView: () => void;
   dispose: () => void;
@@ -86,18 +87,27 @@ function makeSlice() {
   return slice;
 }
 
-function makeProbePoint() {
-  // 与 demo 一致：半径 0.5 的纯黄小球，关闭深度测试保证永不被遮挡，不加光晕。
+function makeCompositionPath() {
+  // 使用极细圆柱代替 WebGL 原生 1px Line，确保高分屏和缩放状态下仍清晰可见。
+  const geometry = new THREE.CylinderGeometry(
+    0.055,
+    0.055,
+    TEMPERATURE_SPAN,
+    12,
+  );
   const material = new THREE.MeshBasicMaterial({
-    color: 0xffe600,
-    depthTest: false,
+    color: 0xff334f,
     transparent: true,
+    opacity: 1,
+    depthTest: false,
+    depthWrite: false,
   });
-  const point = new THREE.Mesh(new THREE.SphereGeometry(0.5, 32, 32), material);
-  point.renderOrder = 999;
-  point.frustumCulled = false;
-  point.visible = false;
-  return point;
+  const line = new THREE.Mesh(geometry, material);
+  line.position.y = TEMPERATURE_SPAN * 0.5;
+  line.renderOrder = 999;
+  line.frustumCulled = false;
+  line.visible = false;
+  return line;
 }
 
 function makeInvariantPoint() {
@@ -154,8 +164,6 @@ export function createPhaseScene({
   // 范围取模型自身尺寸，成分探测点（x/z 最大 ±11.5，y ∈ [0, TEMPERATURE_SPAN]）也落在其中，
   // 所以视角追踪不会被截断。
   /** 相区沿环向、径向和高度方向同时分离，确保每个相区都能独立观察。 */
-  const EXPLODE_VERTICAL_STEP = 2.5;
-
   const TARGET_LIMIT_XZ = 12;
   const TARGET_LIMIT_Y_MIN = 0;
   const TARGET_LIMIT_Y_MAX = TOP_Y + 1;
@@ -197,10 +205,10 @@ export function createPhaseScene({
   const slice = makeSlice();
   scene.add(slice);
 
-  const probePoint = makeProbePoint();
-  probePoint.traverse((object) => object.layers.set(1));
+  const compositionPath = makeCompositionPath();
+  compositionPath.traverse((object) => object.layers.set(1));
   camera.layers.enable(1);
-  scene.add(probePoint);
+  scene.add(compositionPath);
 
   const invariantPoint = makeInvariantPoint();
   invariantPoint.traverse((object) => object.layers.set(1));
@@ -224,6 +232,7 @@ export function createPhaseScene({
     single: true,
     two: true,
     three: true,
+    four: true,
   };
   let currentPhaseVisibility: Record<string, boolean> = {};
   let disposed = false;
@@ -336,20 +345,33 @@ export function createPhaseScene({
     phaseVisuals.forEach((visual) => setPhaseVisualHighlight(visual, phaseId));
   }
 
+  function setPathHighlight(phaseIds: string[]) {
+    const highlightedIds = new Set(phaseIds);
+    phaseVisuals.forEach((visual) =>
+      setPhaseVisualPathHighlight(visual, highlightedIds),
+    );
+  }
+
   function rebuild(model: ModelKey) {
     disposeVisuals();
     const specs = layersFor(model);
-    const explodeRadius = THREE.MathUtils.clamp(specs.length * 1.9, 8, 17);
+    const explodeRadius = THREE.MathUtils.clamp(specs.length * 0.95, 4, 8.5);
     const explodeScale = specs.length >= 10 ? 0.34 : specs.length >= 6 ? 0.48 : 0.65;
+    const modelCenter = new THREE.Vector3(0, TOP_Y * 0.5, 0);
+    const goldenAngle = Math.PI * (3 - Math.sqrt(5));
     phaseVisuals = specs.map((spec, index) => {
       const visual = createPhaseVisual(spec, slicePlane, index + 1);
-      const angle = (index / Math.max(1, specs.length)) * Math.PI * 2 - Math.PI / 2;
-      const verticalBand = (index % 3) - 1;
-      visual.targetPosition.set(
-        Math.cos(angle) * explodeRadius,
-        verticalBand * EXPLODE_VERTICAL_STEP,
-        Math.sin(angle) * explodeRadius,
+      const fallbackY = 1 - (2 * (index + 0.5)) / Math.max(1, specs.length);
+      const fallbackRadius = Math.sqrt(Math.max(0, 1 - fallbackY * fallbackY));
+      const fallbackDirection = new THREE.Vector3(
+        Math.cos(index * goldenAngle) * fallbackRadius,
+        fallbackY,
+        Math.sin(index * goldenAngle) * fallbackRadius,
       );
+      const direction = visual.centroid.clone().sub(modelCenter);
+      if (direction.lengthSq() < 1) direction.copy(fallbackDirection);
+      else direction.normalize();
+      visual.targetPosition.copy(direction.multiplyScalar(explodeRadius));
       visual.targetScale = explodeScale;
       phaseGroup.add(visual.root);
       return visual;
@@ -357,7 +379,8 @@ export function createPhaseScene({
     currentPhaseVisibility = Object.fromEntries(
       phaseVisuals.map((visual) => [visual.id, true]),
     );
-    probePoint.visible = false;
+    compositionPath.visible = false;
+    frame.scale.y = model === "isomorphous" ? 1.2 : 1;
     const invariantPosition = invariantPointPosition(model);
     invariantPoint.visible = invariantPosition !== null;
     if (invariantPosition) invariantPoint.position.copy(invariantPosition);
@@ -370,8 +393,10 @@ export function createPhaseScene({
     currentTemperature = temperature;
     currentExploded = exploded;
     const y = (temperature / 100) * TEMPERATURE_SPAN;
+    // 0% 时裁剪面仍精确落在底面；只把可视化的青色薄片抬高极小距离，
+    // 避免它与底面完全共面造成 Z-fighting、模糊和杂色。
     slicePlane.constant = y;
-    slice.position.y = y;
+    slice.position.y = y === 0 ? 0.08 : y;
     slice.visible = temperature < 100 && !exploded;
   }
 
@@ -406,14 +431,16 @@ export function createPhaseScene({
     applyVisibility();
   }
 
-  function setPoint(position: THREE.Vector3) {
-    probePoint.position.copy(position);
-    probePoint.visible = true;
-    trackTarget(position);
+  function setCompositionPath(position: THREE.Vector3, phaseIds: string[]) {
+    compositionPath.position.set(position.x, TEMPERATURE_SPAN * 0.5, position.z);
+    compositionPath.visible = true;
+    setPathHighlight(phaseIds);
+    trackTarget(new THREE.Vector3(position.x, TOP_Y * 0.5, position.z));
   }
 
-  function clearPoint() {
-    probePoint.visible = false;
+  function clearCompositionPath() {
+    compositionPath.visible = false;
+    setHighlight(null);
     trackTarget(DEFAULT_CAMERA_TARGET);
   }
 
@@ -435,7 +462,7 @@ export function createPhaseScene({
     desiredTarget.copy(DEFAULT_CAMERA_TARGET);
     trackingTarget = false;
     currentExploded = false;
-    probePoint.visible = false;
+    compositionPath.visible = false;
     phaseVisuals.forEach((visual) => {
       visual.root.position.set(0, 0, 0);
       visual.root.scale.setScalar(1);
@@ -496,7 +523,7 @@ export function createPhaseScene({
   let sampledFrames = 0;
   let sampleStart = 0;
 
-  function animate(time: number) {
+  function animate() {
     if (disposed) return;
     animationFrame = requestAnimationFrame(animate);
 
@@ -543,8 +570,8 @@ export function createPhaseScene({
     setFilters,
     setPhaseVisibility,
     setHighlight,
-    setPoint,
-    clearPoint,
+    setCompositionPath,
+    clearCompositionPath,
     setTopView,
     resetView,
     dispose() {
@@ -557,7 +584,7 @@ export function createPhaseScene({
       disposeVisuals();
       disposeObject(frame);
       disposeObject(slice);
-      disposeObject(probePoint);
+      disposeObject(compositionPath);
       disposeObject(invariantPoint);
       composer.dispose();
       renderer.dispose();

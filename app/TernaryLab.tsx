@@ -9,6 +9,7 @@ import {
   type PhaseResult,
   layersFor,
   phaseAt,
+  phasePathAtComposition,
   positionFromComposition,
 } from "./three/phaseGeometry";
 import {
@@ -19,22 +20,19 @@ import {
 
 const MODEL_META: Record<
   ModelKey,
-  { short: string; title: string; note: string }
+  { short: string; title: string }
 > = {
   isomorphous: {
     short: "三元匀晶",
     title: "三元匀晶相图",
-    note: "观察液相、L + α 两相区与 α 固相区如何随温度连续过渡。",
   },
   eutectic: {
     short: "不互溶共晶",
     title: "固态不互溶的三元共晶相图",
-    note: "液相面向三元共晶点收敛，低温三相区形成清晰的水平反应层。",
   },
   limited: {
     short: "有限互溶共晶",
     title: "固态有限互溶的三元共晶相图",
-    note: "在共晶骨架上加入固态溶解度边界，比较 α + β 两相区的空间变化。",
   },
 };
 
@@ -42,19 +40,22 @@ const CATEGORY_LABELS: Record<PhaseCategory, string> = {
   single: "单相区",
   two: "两相区",
   three: "三相区",
+  four: "四相区",
 };
 
 const ALL_VISIBLE: Record<PhaseCategory, boolean> = {
   single: true,
   two: true,
   three: true,
+  four: true,
 };
 
-/** 当前温度状态里相区名的取色，取自 demo 的 updatePhaseTextByTemp。 */
+/** 当前所选相区名称的提示色。 */
 const STATUS_ACCENT = {
   liquid: "#93c5fd",
   twoPhase: "#5eead4",
   solid: "#fcd34d",
+  four: "#c4b5fd",
 } as const;
 
 const EMPTY_VERTEX_LABELS: VertexLabelPositions = {
@@ -67,10 +68,8 @@ function visibilityForModel(model: ModelKey) {
   return Object.fromEntries(layersFor(model).map((phase) => [phase.id, true]));
 }
 
-function categoryDescription(model: ModelKey, category: PhaseCategory) {
-  const phases = layersFor(model).filter((phase) => phase.category === category);
-  if (phases.length === 0) return "本模型无此类相区";
-  return phases.map((phase) => phase.name.replace(/区$/, "")).join(" / ");
+function displayPhaseName(name: string) {
+  return name.replace(/\s*\([^)]*\)\s*$/, "").trim();
 }
 
 export default function TernaryLab() {
@@ -80,6 +79,8 @@ export default function TernaryLab() {
   const [model, setModel] = useState<ModelKey>("isomorphous");
   const [temperature, setTemperature] = useState(100);
   const [exploded, setExploded] = useState(false);
+  const [phaseMenuOpen, setPhaseMenuOpen] = useState(true);
+  const [functionMenuOpen, setFunctionMenuOpen] = useState(true);
   const [filters, setFilters] = useState<Record<PhaseCategory, boolean>>(ALL_VISIBLE);
   const [phaseVisibility, setPhaseVisibility] = useState<Record<string, boolean>>(
     () => visibilityForModel("isomorphous"),
@@ -87,10 +88,10 @@ export default function TernaryLab() {
   const [vertexLabels, setVertexLabels] =
     useState<VertexLabelPositions>(EMPTY_VERTEX_LABELS);
   const [selectedPhase, setSelectedPhase] = useState<string | null>(null);
-  const [composition, setComposition] = useState({ a: 30, b: 40, t: 50 });
+  const [composition, setComposition] = useState({ a: 30, b: 40 });
   const [analysis, setAnalysis] = useState<
     | { error: string }
-    | { c: number; phase: PhaseResult; a: number; b: number; t: number }
+    | { c: number; path: PhaseResult[]; a: number; b: number }
     | null
   >(null);
 
@@ -110,6 +111,7 @@ export default function TernaryLab() {
       ? phaseSpecs.find((phase) => phase.name === selectedPhase)?.id
       : sliceStatus.meshId;
     if (id === "liquid") return STATUS_ACCENT.liquid;
+    if (category === "four") return STATUS_ACCENT.four;
     if (category === "two" || category === "three") return STATUS_ACCENT.twoPhase;
     return STATUS_ACCENT.solid;
   }, [phaseSpecs, selectedPhase, sliceStatus.meshId]);
@@ -164,6 +166,7 @@ export default function TernaryLab() {
     controller?.setPhaseVisibility(nextVisibility);
     controller?.setTemperature(temperature, false);
     controller?.setExploded(false, temperature);
+    controller?.clearCompositionPath();
     setModel(nextModel);
     setSelectedPhase(null);
     setAnalysis(null);
@@ -172,7 +175,7 @@ export default function TernaryLab() {
   }
 
   function clearAnalysis() {
-    sceneController.current?.clearPoint();
+    sceneController.current?.clearCompositionPath();
     setAnalysis(null);
     setSelectedPhase(null);
     applyHighlight(null);
@@ -181,35 +184,37 @@ export default function TernaryLab() {
   function plotComposition() {
     const a = Number(composition.a);
     const b = Number(composition.b);
-    const t = Number(composition.t);
     const c = 100 - a - b;
 
     if (
-      ![a, b, t].every(Number.isFinite) ||
+      ![a, b].every(Number.isFinite) ||
       a < 0 ||
       b < 0 ||
-      c < 0 ||
-      t < 0 ||
-      t > 100
+      c < 0
     ) {
-      sceneController.current?.clearPoint();
+      sceneController.current?.clearCompositionPath();
       applyHighlight(null);
       setSelectedPhase(null);
       setAnalysis({
         error:
-          "输入无效：A、B 需为非负数且 A + B ≤ 100%，温度需在 0%～100% 之间。",
+          "输入无效：A、B 需为非负数且 A + B ≤ 100%。",
       });
       return;
     }
 
-    const phase = phaseAt(model, a, b, t);
-    sceneController.current?.setPoint(positionFromComposition(a, b, t));
-    applyHighlight(phase.meshId);
-    setSelectedPhase(phase.title);
-    setAnalysis({ c, phase, a, b, t });
+    const path = phasePathAtComposition(model, a, b);
+    sceneController.current?.setCompositionPath(
+      positionFromComposition(a, b, 0),
+      [
+        ...path.map((phase) => phase.meshId),
+        `${model}-four-phase-plane`,
+      ],
+    );
+    setSelectedPhase(null);
+    setAnalysis({ c, path, a, b });
   }
 
-  /** 一次性把相机、等温截面、爆炸视图、相区可见性与成分点分析全部恢复到初始状态。 */
+  /** 一次性把相机、等温截面、相图拆解、相区可见性与凝固路径全部恢复到初始状态。 */
   function resetAll() {
     const nextFilters = { ...ALL_VISIBLE };
     const nextVisibility = visibilityForModel(model);
@@ -219,6 +224,7 @@ export default function TernaryLab() {
     controller?.setExploded(false, 100);
     controller?.setFilters(nextFilters);
     controller?.setPhaseVisibility(nextVisibility);
+    controller?.clearCompositionPath();
     setTemperature(100);
     setExploded(false);
     setFilters(nextFilters);
@@ -255,7 +261,7 @@ export default function TernaryLab() {
             className="top-action-button"
             type="button"
             onClick={resetAll}
-            title="恢复相机视角、等温截面、爆炸视图与相区可见性"
+            title="恢复相机视角、等温截面、相图拆解与相区可见性"
           >
             <HomeIcon />
             <span>重置全部</span>
@@ -265,11 +271,17 @@ export default function TernaryLab() {
 
       <section className="workspace">
         <aside className="left-rail panel-stack">
-          <section className="panel phase-selection-panel">
-            <div className="panel-heading simple-heading">
+          <section className={`panel phase-selection-panel collapsible-panel ${phaseMenuOpen ? "" : "collapsed"}`}>
+            <button
+              type="button"
+              className="panel-heading simple-heading menu-heading"
+              onClick={() => setPhaseMenuOpen((open) => !open)}
+              aria-expanded={phaseMenuOpen}
+            >
               <h2>相图类型</h2>
-            </div>
-            <div className="phase-option-list" role="group" aria-label="相图类型">
+              <span className="menu-chevron" aria-hidden="true">⌄</span>
+            </button>
+            <div className="phase-option-list collapsible-content" role="group" aria-label="相图类型">
               {(Object.keys(MODEL_META) as ModelKey[]).map((key) => (
                 <button
                   type="button"
@@ -285,12 +297,19 @@ export default function TernaryLab() {
             </div>
           </section>
 
-          <section className="panel control-panel">
-            <div className="panel-heading simple-heading">
-              <h2>教学控制台</h2>
-            </div>
+          <section className={`panel control-panel collapsible-panel ${functionMenuOpen ? "" : "collapsed"}`}>
+            <button
+              type="button"
+              className="panel-heading simple-heading menu-heading"
+              onClick={() => setFunctionMenuOpen((open) => !open)}
+              aria-expanded={functionMenuOpen}
+            >
+              <h2>功能模块</h2>
+              <span className="menu-chevron" aria-hidden="true">⌄</span>
+            </button>
 
-            <div className="control-section">
+            <div className="collapsible-content control-content">
+              <div className="control-section">
               <div className="control-label">
                 <div>
                   <span className="accent-line cyan" />
@@ -315,37 +334,47 @@ export default function TernaryLab() {
               <p className="helper">
                 拖动切开三维相区，青色激光面对应当前二维等温截面。
               </p>
-            </div>
-
-            <button
-              type="button"
-              className={exploded ? "explode-button active" : "explode-button"}
-              onClick={() => setExploded((value) => !value)}
-              aria-pressed={exploded}
-            >
-              <span className="button-icon" aria-hidden="true">↕</span>
-              <span>
-                <strong>{exploded ? "复原视图" : "爆炸视图"}</strong>
-                <small>{exploded ? "重新合并各相区" : "向四周拆分各相区"}</small>
-              </span>
-              <span className="button-state">{exploded ? "ON" : "OFF"}</span>
-            </button>
-
-            <div className="divider" />
-
-            <div className="control-section">
-              <div className="control-label">
-                <div>
-                  <span className="accent-line green" />
-                  成分点分析
-                </div>
-                <span className="formula">A + B + C = 100%</span>
               </div>
 
-              <div className="input-grid">
-                {(["a", "b", "t"] as const).map((field) => (
+              <div className="divider" />
+
+              <div className="control-section decomposition-section">
+                <div className="control-label">
+                  <div>
+                    <span className="accent-line amber" />
+                    相图拆解
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className={exploded ? "explode-button active" : "explode-button"}
+                  onClick={() => setExploded((value) => !value)}
+                  aria-pressed={exploded}
+                >
+                  <span className="button-icon" aria-hidden="true">✣</span>
+                  <span>
+                    <strong>{exploded ? "复原相图" : "开始拆解"}</strong>
+                    <small>{exploded ? "重新合并各相区" : "沿三维空间拆分各相区"}</small>
+                  </span>
+                  <span className="button-state">{exploded ? "ON" : "OFF"}</span>
+                </button>
+              </div>
+
+              <div className="divider" />
+
+              <div className="control-section">
+                <div className="control-label">
+                  <div>
+                    <span className="accent-line green" />
+                    合金凝固过程中的相区展示
+                  </div>
+                  <span className="formula">A + B + C = 100%</span>
+                </div>
+
+                <div className="input-grid composition-grid">
+                  {(["a", "b"] as const).map((field) => (
                   <label key={field}>
-                    <span>{field === "t" ? "温度" : field.toUpperCase()} (%)</span>
+                    <span>{field.toUpperCase()} (%)</span>
                     <input
                       type="number"
                       min="0"
@@ -359,8 +388,8 @@ export default function TernaryLab() {
                       }
                     />
                   </label>
-                ))}
-              </div>
+                  ))}
+                </div>
 
               <div className="computed-row">
                 <span>自动计算 C</span>
@@ -375,7 +404,7 @@ export default function TernaryLab() {
                   className="primary-button"
                   onClick={plotComposition}
                 >
-                  <span aria-hidden="true">＋</span> 生成探测点
+                  <span aria-hidden="true">│</span> 生成凝固路径
                 </button>
                 <button
                   type="button"
@@ -396,8 +425,8 @@ export default function TernaryLab() {
                       <div className="analysis-title">
                         <span className="probe-dot" />
                         <div>
-                          <small>理论区域判断</small>
-                          <strong>{analysis.phase.title}</strong>
+                          <small>由高温到低温</small>
+                          <strong>凝固路径穿过 {analysis.path.length} 个相区</strong>
                         </div>
                       </div>
                       <dl>
@@ -408,14 +437,15 @@ export default function TernaryLab() {
                           </dd>
                         </div>
                         <div>
-                          <dt>相组成</dt>
-                          <dd>{analysis.phase.detail}</dd>
+                          <dt>相区路径</dt>
+                          <dd>{analysis.path.map((phase) => displayPhaseName(phase.title)).join(" → ")}</dd>
                         </div>
                       </dl>
                     </>
                   )}
                 </div>
               )}
+              </div>
             </div>
           </section>
         </aside>
@@ -459,9 +489,8 @@ export default function TernaryLab() {
           <div className="phase-legend">
             <span><i className="legend-swatch two" /> 两相</span>
             <span><i className="legend-swatch solid" /> 固相</span>
-            {model !== "isomorphous" && (
-              <span><i className="legend-swatch three" /> 三相</span>
-            )}
+            <span><i className="legend-swatch three" /> 三相</span>
+            <span><i className="legend-swatch four" /> 四相面</span>
           </div>
 
           <div className="interaction-hints" aria-label="视图操作说明">
@@ -474,24 +503,17 @@ export default function TernaryLab() {
 
         <aside className="right-rail panel-stack info-panel">
           <section className="panel status-panel">
-            <div className="card-title">当前温度状态</div>
-            {/* 形式与 demo 的 #status-display 一致：居中卡片 + 小号大写标签 + 大号相区名，
-                相区名按类别取色（液相 #93c5fd / 两相 #5eead4 / 固相 #fcd34d）。 */}
+            <div className="card-title">当前所选相区</div>
             <div className="status-card">
-              <small>{selectedPhase ? "已选中相区" : "中心成分当前温度"}</small>
               <strong style={{ color: statusAccent }}>
-                {selectedPhase ?? sliceStatus.title}
+                {displayPhaseName(selectedPhase ?? sliceStatus.title)}
               </strong>
-              <p>
-                {selectedPhase
-                  ? "点击空白处可取消高亮"
-                  : `固定参考 A / B / C = 33.33%`}
-              </p>
+              <p>点击空白处可取消高亮</p>
             </div>
           </section>
 
           <section className="panel filter-section">
-            <div className="card-title">相区可见性</div>
+            <div className="card-title">相区</div>
             <div className="filter-list">
               {/* 主列表：与 demo 一致，按相区逐个勾选，色点用该相区的实际配色。 */}
               <div className="phase-visibility-list">
@@ -513,7 +535,7 @@ export default function TernaryLab() {
                       className="phase-swatch"
                       style={{ background: `#${phase.color.toString(16).padStart(6, "0")}` }}
                     />
-                    <span>{phase.name}</span>
+                    <span>{displayPhaseName(phase.name)}</span>
                   </label>
                 ))}
               </div>
@@ -535,21 +557,12 @@ export default function TernaryLab() {
                         }))
                       }
                     />
-                    <span className={`filter-indicator ${category}`} />
-                    <span>
-                      <strong>{CATEGORY_LABELS[category]}</strong>
-                      <small>{categoryDescription(model, category)}</small>
-                    </span>
+                    <strong>{CATEGORY_LABELS[category]}</strong>
                     <b>{hasCategory ? (filters[category] ? "显示" : "隐藏") : "—"}</b>
                   </label>
                 );
               })}
             </div>
-          </section>
-
-          <section className="panel teaching-note">
-            <div className="card-title">教学解析</div>
-            <p>{meta.note}</p>
           </section>
 
         </aside>

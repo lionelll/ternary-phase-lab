@@ -397,27 +397,49 @@ function immiscibleCotecticGeometry(
   const secondBoundary = curve.map((item) =>
     point(axisBary(secondAxis), item.t),
   );
+  const thickness = Math.max(0.018, (curve[0].t - curve[curve.length - 1].t) * 0.3);
+  const lowerCurve = curve.map((item) =>
+    point(item.b, Math.max(REFERENCE_LOW_T, item.t - thickness)),
+  );
+  const lowerFirstBoundary = lowerCurve.map((item) =>
+    point(axisBary(firstAxis), item.t),
+  );
+  const lowerSecondBoundary = lowerCurve.map((item) =>
+    point(axisBary(secondAxis), item.t),
+  );
   const vertices: BarycentricPoint4[] = [];
   const faces: number[][] = [];
   for (let index = 0; index < curve.length; index += 1) {
-    const curvePoint = curve[index];
     vertices.push(
       firstBoundary[index],
-      curvePoint,
+      curve[index],
       secondBoundary[index],
+      lowerFirstBoundary[index],
+      lowerCurve[index],
+      lowerSecondBoundary[index],
     );
   }
-  const at = (row: number, offset: number) => row * 3 + offset;
+  const at = (row: number, offset: number) => row * 6 + offset;
   for (let row = 0; row < curve.length - 1; row += 1) {
     faces.push(
       [at(row, 0), at(row + 1, 0), at(row + 1, 1), at(row, 1)],
       [at(row, 1), at(row + 1, 1), at(row + 1, 2), at(row, 2)],
-      [at(row, 2), at(row + 1, 2), at(row + 1, 0), at(row, 0)],
+      [at(row, 4), at(row + 1, 4), at(row + 1, 3), at(row, 3)],
+      [at(row, 5), at(row + 1, 5), at(row + 1, 4), at(row, 4)],
+      [at(row, 0), at(row, 3), at(row + 1, 3), at(row + 1, 0)],
+      [at(row, 2), at(row + 1, 2), at(row + 1, 5), at(row, 5)],
     );
   }
   faces.push(
-    [0, 1, 2],
-    [at(curve.length - 1, 0), at(curve.length - 1, 2), at(curve.length - 1, 1)],
+    [0, 1, 2, 5, 4, 3],
+    [
+      at(curve.length - 1, 0),
+      at(curve.length - 1, 3),
+      at(curve.length - 1, 4),
+      at(curve.length - 1, 5),
+      at(curve.length - 1, 2),
+      at(curve.length - 1, 1),
+    ],
   );
   return {
     vertices,
@@ -426,10 +448,16 @@ function immiscibleCotecticGeometry(
       curve,
       firstBoundary,
       secondBoundary,
-      // 三相区在二元共晶端与三元共晶端均以一条连续实线封口，
-      // 与两侧相邻的液-固两相区边界首尾相接。
+      lowerCurve,
+      lowerFirstBoundary,
+      lowerSecondBoundary,
       [firstBoundary[0], secondBoundary[0]],
+      [lowerFirstBoundary[0], lowerSecondBoundary[0]],
       [firstBoundary[firstBoundary.length - 1], secondBoundary[secondBoundary.length - 1]],
+      [
+        lowerFirstBoundary[lowerFirstBoundary.length - 1],
+        lowerSecondBoundary[lowerSecondBoundary.length - 1],
+      ],
     ],
   };
 }
@@ -589,10 +617,10 @@ function makeImmiscibleModel() {
     beta: joinCurves(ab, reverseCurve(bc)),
     gamma: joinCurves(bc, reverseCurve(ca)),
   };
-  const pureBoundary = (axis: number) => {
-    const pure = point(axisBary(axis), invariant);
-    return [pure, pure, pure];
-  };
+  const axisBoundary = (
+    axis: number,
+    source: readonly BarycentricPoint4[],
+  ) => source.map((item) => point(axisBary(axis), item.t));
   const primaryOptions = {
     radialSegments: 14,
     upperPower: 1.08,
@@ -610,21 +638,21 @@ function makeImmiscibleModel() {
     point([1, 0, 0], 0.94),
     point([1, 0, 0], invariant),
     boundaries.alpha,
-    pureBoundary(0),
+    axisBoundary(0, boundaries.alpha),
     primaryOptions,
   );
   const beta = makeRuledVolume(
     point([0, 1, 0], 0.88),
     point([0, 1, 0], invariant),
     boundaries.beta,
-    pureBoundary(1),
+    axisBoundary(1, boundaries.beta),
     primaryOptions,
   );
   const gamma = makeRuledVolume(
     point([0, 0, 1], 0.91),
     point([0, 0, 1], invariant),
     boundaries.gamma,
-    pureBoundary(2),
+    axisBoundary(2, boundaries.gamma),
     gammaPrimaryOptions,
   );
   const outerEdges = [
@@ -1242,6 +1270,15 @@ export function classifyReferencePoint(
 ) {
   if (t >= liquidusAtReference(model, u, v) - 1e-7) {
     return MODELS[model].layers.find((item) => item.id === "liquid")!;
+  }
+
+  // 完全不互溶模型在三元共晶温度以下只有 α + β + γ 三固相区。
+  // 三相带加厚后，它的教学几何会略低于共晶面；判区仍应服从热力学拓扑，
+  // 不能因为射线恰好穿过用于展示厚度的侧壁而误判成液-固两相区。
+  if (model === "eutectic" && t <= MODELS.eutectic.invariant + 1e-7) {
+    return MODELS.eutectic.layers.find(
+      (item) => item.id === "eutectic-solid-three",
+    )!;
   }
 
   const w = 1 - u - v;

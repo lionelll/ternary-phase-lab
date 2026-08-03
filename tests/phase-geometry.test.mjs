@@ -5,6 +5,7 @@ import {
   layersFor,
   invariantPointPosition,
   phaseAt,
+  phasePathAtComposition,
   positionFromComposition,
   referenceTemperatureToWorld,
   surfacesFor,
@@ -44,9 +45,27 @@ test("pure liquid bodies are hidden in all three models", () => {
   }
 });
 
-test("temperature axis is stretched by twenty percent without changing composition coordinates", () => {
-  assert.equal(TOP_Y, 16.8);
-  assert.equal(TEMPERATURE_SPAN, 18);
+test("all three teaching models expose one independently filterable four-phase plane", () => {
+  for (const model of MODELS) {
+    const planes = layersFor(model).filter((layer) => layer.category === "four");
+    assert.equal(planes.length, 1);
+    assert.equal(planes[0].geometry.faces.length, 1);
+    assert.deepEqual(planes[0].geometry.faces[0], [0, 1, 2]);
+  }
+});
+
+test("solidification path starts at liquid and crosses rendered regions from high to low temperature", () => {
+  for (const model of MODELS) {
+    const path = phasePathAtComposition(model, 33, 34);
+    assert.equal(path[0].meshId, "liquid");
+    assert.ok(path.length >= 2);
+    assert.equal(new Set(path.map((phase) => phase.meshId)).size, path.length);
+  }
+});
+
+test("temperature axis keeps the earlier stretch and adds the requested thirty percent without changing composition coordinates", () => {
+  assert.equal(TOP_Y, 21.84);
+  assert.ok(Math.abs(TEMPERATURE_SPAN - 23.4) < 1e-12);
 });
 
 test("both eutectic models expose a finite visible ternary invariant point", () => {
@@ -67,10 +86,10 @@ test("three-phase guide lines keep shared boundaries without closed triangular t
   for (const layer of referenceLayersFor("eutectic").filter((item) =>
     item.id.startsWith("eutectic-three-"),
   )) {
-    assert.equal(layer.geometry.edgeSegments.length, 5);
+    assert.equal(layer.geometry.edgeSegments.length, 10);
     assert.deepEqual(
-      layer.geometry.edgeSegments.slice(-2).map((segment) => segment.length),
-      [2, 2],
+      layer.geometry.edgeSegments.slice(-4).map((segment) => segment.length),
+      [2, 2, 2, 2],
     );
   }
 });
@@ -139,10 +158,10 @@ test("binary and ternary eutectic landmarks are shared by adjoining regions", ()
   }
 });
 
-test("immiscible model follows the eutectic valley and low-temperature topology", () => {
+test("immiscible model follows the eutectic valley and thickened low-temperature topology", () => {
   assert.equal(phaseAt("eutectic", 100, 0, 30).meshId, "liquid-alpha");
   assert.equal(
-    phaseAt("eutectic", 50, 45, 30).meshId,
+    phaseAt("eutectic", 50, 45, 31).meshId,
     "eutectic-three-alpha-beta",
   );
   assert.equal(
@@ -175,10 +194,10 @@ test("liquidus meets each model's exact ternary eutectic point", () => {
   }
 });
 
-test("isomorphous composition topology remains unchanged", () => {
+test("isomorphous composition topology remains unchanged apart from the independent four-phase teaching plane", () => {
   assert.deepEqual(
     layersFor("isomorphous").map((item) => item.id),
-    ["alpha-solid", "liquid-alpha"],
+    ["alpha-solid", "liquid-alpha", "isomorphous-four-phase-plane"],
   );
   assert.equal(phaseAt("isomorphous", 30, 40, 50).meshId, "liquid-alpha");
 

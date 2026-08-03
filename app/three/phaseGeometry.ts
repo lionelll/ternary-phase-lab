@@ -10,7 +10,7 @@ import {
 } from "./eutecticModels.ts";
 
 export type ModelKey = "isomorphous" | "eutectic" | "limited";
-export type PhaseCategory = "single" | "two" | "three";
+export type PhaseCategory = "single" | "two" | "three" | "four";
 export type ExplodeDirection = "up" | "down" | "center";
 
 export type SurfaceFn = (u: number, v: number, w: number) => number;
@@ -68,13 +68,15 @@ export const PHASE_EDGE_RENDER_ORDER_BASE = 50;
 export const DEFAULT_FRONT_OPACITY = 0.65;
 export const SELECTED_FRONT_OPACITY = 0.85;
 export const DIMMED_FRONT_OPACITY = 0.05;
+export const PATH_DIMMED_FRONT_OPACITY = DEFAULT_FRONT_OPACITY * 0.1;
 export const DEFAULT_EDGE_OPACITY = 0.5;
 export const SELECTED_EDGE_OPACITY = 1;
 export const DIMMED_EDGE_OPACITY = 0.1;
+export const PATH_DIMMED_EDGE_OPACITY = DEFAULT_EDGE_OPACITY * 0.1;
 
 export const L = 20;
 /** 仅拉伸温度轴，底面等边三角形宽度保持不变。 */
-export const HEIGHT_SCALE = 1.2;
+export const HEIGHT_SCALE = 1.2 * 1.3;
 export const A_VERTEX = new THREE.Vector3(-L / 2, 0, (Math.sqrt(3) * L) / 6);
 export const B_VERTEX = new THREE.Vector3(L / 2, 0, (Math.sqrt(3) * L) / 6);
 export const C_VERTEX = new THREE.Vector3(0, 0, (-Math.sqrt(3) * L) / 3);
@@ -106,7 +108,7 @@ export const T_A = 3 * HEIGHT_SCALE;
 export const T_B = 7 * HEIGHT_SCALE;
 export const T_C = 11 * HEIGHT_SCALE;
 
-export const DEFAULT_CAMERA_POSITION = new THREE.Vector3(28, 22, 32);
+export const DEFAULT_CAMERA_POSITION = new THREE.Vector3(28, 25, 32);
 export const DEFAULT_CAMERA_TARGET = new THREE.Vector3(0, 6.5 * HEIGHT_SCALE, 0);
 export const CAMERA_FOV = 45;
 
@@ -115,6 +117,7 @@ export const PHASE_COLORS = {
   solid: 0xd97706,
   twoPhase: 0x14b8a6,
   liquid: 0x1e3a8a,
+  fourPhase: 0x8b5cf6,
 } as const;
 
 const FULL_DOMAIN: readonly BarycentricPoint[] = [
@@ -175,17 +178,50 @@ export function surfacesFor(model: ModelKey) {
 }
 
 export function layersFor(model: ModelKey): LayerSpec[] {
+  const fourPhaseReferenceTemperature =
+    model === "eutectic" ? 0.28 : model === "limited" ? 0.32 : 0.53;
+  const fourPhasePoint = (b: readonly [number, number, number]) => ({
+    b,
+    t: fourPhaseReferenceTemperature,
+  });
+  const fourPhaseVertices = [
+    fourPhasePoint([1, 0, 0]),
+    fourPhasePoint([0, 1, 0]),
+    fourPhasePoint([0, 0, 1]),
+  ];
+  const fourPhasePlane: LayerSpec = {
+    id: `${model}-four-phase-plane`,
+    name: "四相平衡面 (L + α + β + γ)",
+    category: "four",
+    color: PHASE_COLORS.fourPhase,
+    bottom: () => 0,
+    top: () => 0,
+    explode: "center",
+    geometry: {
+      vertices: fourPhaseVertices,
+      faces: [[0, 1, 2]],
+      edgeSegments: [[
+        fourPhaseVertices[0],
+        fourPhaseVertices[1],
+        fourPhaseVertices[2],
+        fourPhaseVertices[0],
+      ]],
+    },
+  };
   const referenceSpecs =
     model === "isomorphous" ? undefined : referenceLayersFor(model);
   if (referenceSpecs) {
     const emptySurface: SurfaceFn = () => 0;
-    return referenceSpecs
-      .filter((spec) => spec.id !== "liquid")
-      .map((spec) => ({
-        ...spec,
-        bottom: emptySurface,
-        top: emptySurface,
-      }));
+    return [
+      ...referenceSpecs
+        .filter((spec) => spec.id !== "liquid")
+        .map((spec) => ({
+          ...spec,
+          bottom: emptySurface,
+          top: emptySurface,
+        })),
+      fourPhasePlane,
+    ];
   }
 
   const { solidus, liquidus, invariantTop, solvus } = surfacesFor(model);
@@ -212,6 +248,7 @@ export function layersFor(model: ModelKey): LayerSpec[] {
         top: liquidus,
         explode: "center",
       },
+      fourPhasePlane,
     ];
   }
 
@@ -779,6 +816,19 @@ export function setPhaseVisualHighlight(visual: PhaseVisual, selectedId: string 
   visual.edgeMaterial.opacity = edge;
 }
 
+export function setPhaseVisualPathHighlight(
+  visual: PhaseVisual,
+  highlightedIds: ReadonlySet<string>,
+) {
+  const highlighted = highlightedIds.has(visual.id);
+  visual.frontMaterial.opacity = highlighted
+    ? SELECTED_FRONT_OPACITY
+    : PATH_DIMMED_FRONT_OPACITY;
+  visual.edgeMaterial.opacity = highlighted
+    ? SELECTED_EDGE_OPACITY
+    : PATH_DIMMED_EDGE_OPACITY;
+}
+
 export function makeReferenceFrame() {
   // 与 demo 一致：纯白细线、opacity 0.2，只有三棱柱的 9 条棱，不加顶点节点球。
   const vertices = [A_VERTEX, B_VERTEX, C_VERTEX];
@@ -910,6 +960,19 @@ export function phaseAt(
     detail: detailById[referenceLayer.id] ?? referenceLayer.name,
     meshId: referenceLayer.id,
   };
+}
+
+/** 固定成分从高温到低温所穿过的相区，顺序即凝固路径顺序。 */
+export function phasePathAtComposition(model: ModelKey, a: number, b: number) {
+  const crossed: PhaseResult[] = [];
+  const seen = new Set<string>();
+  for (let temperature = 100; temperature >= 0; temperature -= 1) {
+    const phase = phaseAt(model, a, b, temperature);
+    if (seen.has(phase.meshId)) continue;
+    seen.add(phase.meshId);
+    crossed.push(phase);
+  }
+  return crossed;
 }
 
 export function disposeObject(root: THREE.Object3D) {
