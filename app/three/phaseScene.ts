@@ -167,6 +167,7 @@ export function createPhaseScene({
   const TARGET_LIMIT_XZ = 12;
   const TARGET_LIMIT_Y_MIN = 0;
   const TARGET_LIMIT_Y_MAX = TOP_Y + 1;
+  const EXPLOSION_CENTER = new THREE.Vector3(0, TOP_Y * 0.5, 0);
 
   function clampTarget() {
     controls.target.x = THREE.MathUtils.clamp(
@@ -357,7 +358,6 @@ export function createPhaseScene({
     const specs = layersFor(model);
     const explodeRadius = THREE.MathUtils.clamp(specs.length * 0.95, 4, 8.5);
     const explodeScale = specs.length >= 10 ? 0.34 : specs.length >= 6 ? 0.48 : 0.65;
-    const modelCenter = new THREE.Vector3(0, TOP_Y * 0.5, 0);
     const goldenAngle = Math.PI * (3 - Math.sqrt(5));
     phaseVisuals = specs.map((spec, index) => {
       const visual = createPhaseVisual(spec, slicePlane, index + 1);
@@ -368,10 +368,13 @@ export function createPhaseScene({
         fallbackY,
         Math.sin(index * goldenAngle) * fallbackRadius,
       );
-      const direction = visual.centroid.clone().sub(modelCenter);
+      const direction = visual.centroid.clone().sub(EXPLOSION_CENTER);
       if (direction.lengthSq() < 1) direction.copy(fallbackDirection);
       else direction.normalize();
-      visual.targetPosition.copy(direction.multiplyScalar(explodeRadius));
+      visual.targetPosition
+        .copy(direction.multiplyScalar(explodeRadius))
+        // root 以世界原点缩放；补偿缩放造成的整体下沉，让拆解球心保持在模型中心。
+        .addScaledVector(EXPLOSION_CENTER, 1 - explodeScale);
       visual.targetScale = explodeScale;
       phaseGroup.add(visual.root);
       return visual;
@@ -380,7 +383,8 @@ export function createPhaseScene({
       phaseVisuals.map((visual) => [visual.id, true]),
     );
     compositionPath.visible = false;
-    frame.scale.y = model === "isomorphous" ? 1.2 : 1;
+    // 三种模型共用同一三棱柱高度，避免匀晶模型参考框额外拉高。
+    frame.scale.y = 1;
     const invariantPosition = invariantPointPosition(model);
     invariantPoint.visible = invariantPosition !== null;
     if (invariantPosition) invariantPoint.position.copy(invariantPosition);
@@ -412,6 +416,7 @@ export function createPhaseScene({
         : new THREE.Vector3();
       visual.root.userData.targetScale = exploded ? visual.targetScale : 1;
     });
+    trackTarget(exploded ? EXPLOSION_CENTER : DEFAULT_CAMERA_TARGET);
   }
 
   function applyVisibility() {

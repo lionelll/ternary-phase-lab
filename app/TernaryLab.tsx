@@ -207,7 +207,7 @@ export default function TernaryLab() {
       positionFromComposition(a, b, 0),
       [
         ...path.map((phase) => phase.meshId),
-        `${model}-four-phase-plane`,
+        ...(model === "isomorphous" ? [] : [`${model}-four-phase-plane`]),
       ],
     );
     setSelectedPhase(null);
@@ -404,7 +404,7 @@ export default function TernaryLab() {
                   className="primary-button"
                   onClick={plotComposition}
                 >
-                  <span aria-hidden="true">│</span> 生成凝固路径
+                  <span aria-hidden="true">│</span> 确认
                 </button>
                 <button
                   type="button"
@@ -490,7 +490,9 @@ export default function TernaryLab() {
             <span><i className="legend-swatch two" /> 两相</span>
             <span><i className="legend-swatch solid" /> 固相</span>
             <span><i className="legend-swatch three" /> 三相</span>
-            <span><i className="legend-swatch four" /> 四相面</span>
+            {model !== "isomorphous" && (
+              <span><i className="legend-swatch four" /> 四相面</span>
+            )}
           </div>
 
           <div className="interaction-hints" aria-label="视图操作说明">
@@ -544,6 +546,7 @@ export default function TernaryLab() {
               <div className="phase-visibility-heading">按类别批量显示 / 隐藏</div>
               {(Object.keys(CATEGORY_LABELS) as PhaseCategory[]).map((category) => {
                 const hasCategory = phaseSpecs.some((phase) => phase.category === category);
+                if (model === "isomorphous" && category === "four") return null;
                 return (
                   <label key={category} className="filter-row">
                     <input

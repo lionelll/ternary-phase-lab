@@ -448,7 +448,8 @@ function immiscibleCotecticGeometry(
       curve,
       firstBoundary,
       secondBoundary,
-      lowerCurve,
+      // 下移后的底面仍用于形成加宽实体，但不再绘制中间的 lowerCurve。
+      // 三个三相区各自的 lowerCurve 正是视图中重复出现的三条扇形杂线。
       lowerFirstBoundary,
       lowerSecondBoundary,
       [firstBoundary[0], secondBoundary[0]],

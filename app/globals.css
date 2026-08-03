@@ -929,10 +929,8 @@ kbd {
 
 .top-actions {
   justify-self: end;
-  width: 424px;
   display: flex;
   align-items: center;
-  justify-content: flex-start;
   gap: 14px;
   min-width: 0;
 }
@@ -1230,9 +1228,12 @@ kbd {
 }
 
 .status-card {
-  min-height: 150px;
-  margin: 14px;
-  padding: 14px;
+  min-height: 96px;
+  margin: 10px 14px 12px;
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
 }
 
 .status-icon {

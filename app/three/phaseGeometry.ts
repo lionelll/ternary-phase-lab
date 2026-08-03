@@ -248,7 +248,6 @@ export function layersFor(model: ModelKey): LayerSpec[] {
         top: liquidus,
         explode: "center",
       },
-      fourPhasePlane,
     ];
   }
 

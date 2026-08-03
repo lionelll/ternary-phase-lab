@@ -45,8 +45,12 @@ test("pure liquid bodies are hidden in all three models", () => {
   }
 });
 
-test("all three teaching models expose one independently filterable four-phase plane", () => {
-  for (const model of MODELS) {
+test("only the two eutectic teaching models expose an independently filterable four-phase plane", () => {
+  assert.equal(
+    layersFor("isomorphous").some((layer) => layer.category === "four"),
+    false,
+  );
+  for (const model of ["eutectic", "limited"]) {
     const planes = layersFor(model).filter((layer) => layer.category === "four");
     assert.equal(planes.length, 1);
     assert.equal(planes[0].geometry.faces.length, 1);
@@ -86,7 +90,8 @@ test("three-phase guide lines keep shared boundaries without closed triangular t
   for (const layer of referenceLayersFor("eutectic").filter((item) =>
     item.id.startsWith("eutectic-three-"),
   )) {
-    assert.equal(layer.geometry.edgeSegments.length, 10);
+    // 加宽后的底面保留实体和外轮廓，但不绘制重复的 lowerCurve 中间线。
+    assert.equal(layer.geometry.edgeSegments.length, 9);
     assert.deepEqual(
       layer.geometry.edgeSegments.slice(-4).map((segment) => segment.length),
       [2, 2, 2, 2],
@@ -194,10 +199,10 @@ test("liquidus meets each model's exact ternary eutectic point", () => {
   }
 });
 
-test("isomorphous composition topology remains unchanged apart from the independent four-phase teaching plane", () => {
+test("isomorphous composition topology remains unchanged and has no four-phase plane", () => {
   assert.deepEqual(
     layersFor("isomorphous").map((item) => item.id),
-    ["alpha-solid", "liquid-alpha", "isomorphous-four-phase-plane"],
+    ["alpha-solid", "liquid-alpha"],
   );
   assert.equal(phaseAt("isomorphous", 30, 40, 50).meshId, "liquid-alpha");
 
