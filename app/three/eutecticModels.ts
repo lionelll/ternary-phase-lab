@@ -424,8 +424,8 @@ function immiscibleCotecticGeometry(
     faces.push(
       [at(row, 0), at(row + 1, 0), at(row + 1, 1), at(row, 1)],
       [at(row, 1), at(row + 1, 1), at(row + 1, 2), at(row, 2)],
-      [at(row, 4), at(row + 1, 4), at(row + 1, 3), at(row, 3)],
-      [at(row, 5), at(row + 1, 5), at(row + 1, 4), at(row, 4)],
+      // 下移点只用于撑开外侧壁；不再生成第二套底面。
+      // 透明渲染时这两块底面会与上表面重合，形成用户圈出的重复区域。
       [at(row, 0), at(row, 3), at(row + 1, 3), at(row + 1, 0)],
       [at(row, 2), at(row + 1, 2), at(row + 1, 5), at(row, 5)],
     );
@@ -448,10 +448,7 @@ function immiscibleCotecticGeometry(
       curve,
       firstBoundary,
       secondBoundary,
-      // 下移后的底面仍用于形成加宽实体，但不再绘制中间的 lowerCurve。
-      // 三个三相区各自的 lowerCurve 正是视图中重复出现的三条扇形杂线。
-      lowerFirstBoundary,
-      lowerSecondBoundary,
+      // 删除重复底面的左右两条纵向边；保留端部下边线作为加宽后的外轮廓。
       [firstBoundary[0], secondBoundary[0]],
       [lowerFirstBoundary[0], lowerSecondBoundary[0]],
       [firstBoundary[firstBoundary.length - 1], secondBoundary[secondBoundary.length - 1]],

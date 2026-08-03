@@ -90,8 +90,23 @@ test("three-phase guide lines keep shared boundaries without closed triangular t
   for (const layer of referenceLayersFor("eutectic").filter((item) =>
     item.id.startsWith("eutectic-three-"),
   )) {
-    // 加宽后的底面保留实体和外轮廓，但不绘制重复的 lowerCurve 中间线。
-    assert.equal(layer.geometry.edgeSegments.length, 9);
+    // 只保留上表面三条共享边界和四条端部外轮廓；重复底面的两条纵边已删除。
+    assert.equal(layer.geometry.edgeSegments.length, 7);
+    // 28 行网格：27 段 ×（2 个上表面 + 2 个侧壁）+ 2 个端盖。
+    // 若重复底面的两组面片被重新加入，面数会回到 164。
+    assert.equal(layer.geometry.faces.length, 110);
+    assert.equal(
+      layer.geometry.faces.some((face) =>
+        face.every((vertexIndex) => vertexIndex % 6 >= 3),
+      ),
+      false,
+      `${layer.id} must not contain a lower-only duplicate surface`,
+    );
+    assert.equal(
+      layer.geometry.edgeSegments.filter((segment) => segment.length > 2).length,
+      3,
+      `${layer.id} must keep only the three required longitudinal boundaries`,
+    );
     assert.deepEqual(
       layer.geometry.edgeSegments.slice(-4).map((segment) => segment.length),
       [2, 2, 2, 2],
