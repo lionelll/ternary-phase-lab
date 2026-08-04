@@ -114,10 +114,10 @@ export const CAMERA_FOV = 45;
 
 /** 相区配色（demo 原值）。 */
 export const PHASE_COLORS = {
-  solid: 0xd97706,
-  twoPhase: 0x14b8a6,
-  liquid: 0x1e3a8a,
-  fourPhase: 0x8b5cf6,
+  solid: 0xf59e0b,
+  twoPhase: 0x06b6d4,
+  liquid: 0x1d4ed8,
+  fourPhase: 0xfacc15,
 } as const;
 
 const FULL_DOMAIN: readonly BarycentricPoint[] = [
@@ -178,17 +178,29 @@ export function surfacesFor(model: ModelKey) {
 }
 
 export function layersFor(model: ModelKey): LayerSpec[] {
+  const referenceSpecs =
+    model === "isomorphous" ? undefined : referenceLayersFor(model);
   const fourPhaseReferenceTemperature =
     model === "eutectic" ? 0.28 : model === "limited" ? 0.32 : 0.53;
   const fourPhasePoint = (b: readonly [number, number, number]) => ({
     b,
     t: fourPhaseReferenceTemperature,
   });
-  const fourPhaseVertices = [
-    fourPhasePoint([1, 0, 0]),
-    fourPhasePoint([0, 1, 0]),
-    fourPhasePoint([0, 0, 1]),
-  ];
+  const limitedSolidThree = referenceSpecs?.find(
+    (spec) => spec.id === "limited-solid-three",
+  );
+  const limitedSolidTopFace = limitedSolidThree?.geometry.faces[1];
+  const limitedSolidTopVertices = limitedSolidTopFace?.map(
+    (index) => limitedSolidThree.geometry.vertices[index],
+  );
+  const fourPhaseVertices =
+    model === "limited" && limitedSolidTopVertices?.length === 3
+      ? limitedSolidTopVertices
+      : [
+          fourPhasePoint([1, 0, 0]),
+          fourPhasePoint([0, 1, 0]),
+          fourPhasePoint([0, 0, 1]),
+        ];
   const fourPhasePlane: LayerSpec = {
     id: `${model}-four-phase-plane`,
     name: "四相平衡面 (L + α + β + γ)",
@@ -208,8 +220,6 @@ export function layersFor(model: ModelKey): LayerSpec[] {
       ]],
     },
   };
-  const referenceSpecs =
-    model === "isomorphous" ? undefined : referenceLayersFor(model);
   if (referenceSpecs) {
     const emptySurface: SurfaceFn = () => 0;
     return [
@@ -267,7 +277,7 @@ export function layersFor(model: ModelKey): LayerSpec[] {
         id: "beta-solid",
         name: "β 固相区 (β)",
         category: "single",
-        color: 0xea8a0a,                     // β 固相（solid 提亮）
+        color: 0xf97316,                     // β 固相（solid 提亮）
         bottom: base,
         top: solidus,
         explode: "down",
@@ -277,7 +287,7 @@ export function layersFor(model: ModelKey): LayerSpec[] {
         id: "gamma-solid",
         name: "γ 固相区 (γ)",
         category: "single",
-        color: 0xb45f05,                     // γ 固相（solid 压暗）
+        color: 0x84cc16,                     // γ 固相（solid 压暗）
         bottom: base,
         top: solidus,
         explode: "down",
@@ -287,7 +297,7 @@ export function layersFor(model: ModelKey): LayerSpec[] {
         id: "eutectic-three-alpha-beta",
         name: "L + α + β 三相区 (L + α + β)",
         category: "three",
-        color: 0xf43f5e,                     // 三相区：PRD 要求的高亮特征色
+        color: 0xfb7185,                     // 三相区：PRD 要求的高亮特征色
         bottom: solidus,
         top: invariantTop!,
         explode: "center",
@@ -297,7 +307,7 @@ export function layersFor(model: ModelKey): LayerSpec[] {
         id: "eutectic-three-beta-gamma",
         name: "L + β + γ 三相区 (L + β + γ)",
         category: "three",
-        color: 0xe83f78,
+        color: 0xd946ef,
         bottom: solidus,
         top: invariantTop!,
         explode: "center",
@@ -307,7 +317,7 @@ export function layersFor(model: ModelKey): LayerSpec[] {
         id: "eutectic-three-gamma-alpha",
         name: "L + γ + α 三相区 (L + γ + α)",
         category: "three",
-        color: 0xd946a8,
+        color: 0x9333ea,
         bottom: solidus,
         top: invariantTop!,
         explode: "center",
@@ -327,7 +337,7 @@ export function layersFor(model: ModelKey): LayerSpec[] {
         id: "liquid-beta",
         name: "L + β 两相区 (L + β)",
         category: "two",
-        color: 0x2dd4bf,                     // L+β 两相（twoPhase 提亮）
+        color: 0x10b981,                     // L+β 两相（twoPhase 提亮）
         bottom: invariantTop!,
         top: liquidus,
         explode: "center",
@@ -337,7 +347,7 @@ export function layersFor(model: ModelKey): LayerSpec[] {
         id: "liquid-gamma",
         name: "L + γ 两相区 (L + γ)",
         category: "two",
-        color: 0x0d9488,                     // L+γ 两相（twoPhase 压暗）
+        color: 0x2563eb,                     // L+γ 两相（twoPhase 压暗）
         bottom: invariantTop!,
         top: liquidus,
         explode: "center",
@@ -370,7 +380,7 @@ export function layersFor(model: ModelKey): LayerSpec[] {
       id: "beta-solution",
       name: "β 固溶体 (β)",
       category: "single",
-      color: 0xea8a0a,                     // β 固相（solid 提亮）
+      color: 0xf97316,                     // β 固相（solid 提亮）
       bottom: base,
       top: solvus!,
       explode: "down",
@@ -380,7 +390,7 @@ export function layersFor(model: ModelKey): LayerSpec[] {
       id: "gamma-solution",
       name: "γ 固溶体 (γ)",
       category: "single",
-      color: 0xb45f05,                     // γ 固相（solid 压暗）
+      color: 0x84cc16,                     // γ 固相（solid 压暗）
       bottom: base,
       top: solvus!,
       explode: "down",
@@ -390,7 +400,7 @@ export function layersFor(model: ModelKey): LayerSpec[] {
       id: "alpha-beta",
       name: "α + β 固态两相区 (α + β)",
       category: "two",
-      color: 0x0f9488,                     // α+β 固态两相（twoPhase 压暗）
+      color: 0x0d9488,                     // α+β 固态两相（twoPhase 压暗）
       bottom: solvus!,
       top: solidus,
       explode: "down",
@@ -400,7 +410,7 @@ export function layersFor(model: ModelKey): LayerSpec[] {
       id: "beta-gamma",
       name: "β + γ 固态两相区 (β + γ)",
       category: "two",
-      color: 0x0d7f75,                     // β+γ 固态两相
+      color: 0x65a30d,                     // β+γ 固态两相
       bottom: solvus!,
       top: solidus,
       explode: "down",
@@ -410,7 +420,7 @@ export function layersFor(model: ModelKey): LayerSpec[] {
       id: "gamma-alpha",
       name: "γ + α 固态两相区 (γ + α)",
       category: "two",
-      color: 0x17c7b4,                     // γ+α 固态两相（twoPhase 提亮）
+      color: 0x4f46e5,                     // γ+α 固态两相（twoPhase 提亮）
       bottom: solvus!,
       top: solidus,
       explode: "down",
@@ -420,7 +430,7 @@ export function layersFor(model: ModelKey): LayerSpec[] {
       id: "limited-three-alpha-beta",
       name: "L + α + β 三相区 (L + α + β)",
       category: "three",
-      color: 0xf43f5e,                     // 三相区：PRD 要求的高亮特征色
+      color: 0xfb7185,                     // 三相区：PRD 要求的高亮特征色
       bottom: solidus,
       top: invariantTop!,
       explode: "center",
@@ -430,7 +440,7 @@ export function layersFor(model: ModelKey): LayerSpec[] {
       id: "limited-three-beta-gamma",
       name: "L + β + γ 三相区 (L + β + γ)",
       category: "three",
-      color: 0xe83f78,
+      color: 0xd946ef,
       bottom: solidus,
       top: invariantTop!,
       explode: "center",
@@ -440,7 +450,7 @@ export function layersFor(model: ModelKey): LayerSpec[] {
       id: "limited-three-gamma-alpha",
       name: "L + γ + α 三相区 (L + γ + α)",
       category: "three",
-      color: 0xd946a8,
+      color: 0x9333ea,
       bottom: solidus,
       top: invariantTop!,
       explode: "center",
@@ -460,7 +470,7 @@ export function layersFor(model: ModelKey): LayerSpec[] {
       id: "liquid-beta",
       name: "L + β 两相区 (L + β)",
       category: "two",
-      color: 0x2dd4bf,                     // L+β 两相
+      color: 0x10b981,                     // L+β 两相
       bottom: invariantTop!,
       top: liquidus,
       explode: "center",
@@ -470,7 +480,7 @@ export function layersFor(model: ModelKey): LayerSpec[] {
       id: "liquid-gamma",
       name: "L + γ 两相区 (L + γ)",
       category: "two",
-      color: 0x0d9488,                     // L+γ 两相
+      color: 0x2563eb,                     // L+γ 两相
       bottom: invariantTop!,
       top: liquidus,
       explode: "center",

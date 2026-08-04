@@ -53,9 +53,9 @@ const ALL_VISIBLE: Record<PhaseCategory, boolean> = {
 /** 当前所选相区名称的提示色。 */
 const STATUS_ACCENT = {
   liquid: "#93c5fd",
-  twoPhase: "#5eead4",
-  solid: "#fcd34d",
-  four: "#c4b5fd",
+  twoPhase: "#67e8f9",
+  solid: "#fde68a",
+  four: "#fde047",
 } as const;
 
 const EMPTY_VERTEX_LABELS: VertexLabelPositions = {

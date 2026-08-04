@@ -50,16 +50,16 @@ export const REFERENCE_LOW_T = 0.04;
 export const REFERENCE_AXIS_TOP_T = 1.02;
 
 const PHASE_COLORS = {
-  liquid: 0x1e3a8a,
-  solid: 0xd97706,
-  solidBright: 0xea8a0a,
-  solidDark: 0xb45f05,
-  two: 0x14b8a6,
-  twoBright: 0x2dd4bf,
-  twoDark: 0x0d9488,
-  three: 0xf43f5e,
-  threeAlt: 0xe83f78,
-  threeAlt2: 0xd946a8,
+  liquid: 0x1d4ed8,
+  solid: 0xf59e0b,
+  solidBright: 0xf97316,
+  solidDark: 0x84cc16,
+  two: 0x06b6d4,
+  twoBright: 0x10b981,
+  twoDark: 0x2563eb,
+  three: 0xfb7185,
+  threeAlt: 0xd946ef,
+  threeAlt2: 0x9333ea,
 } as const;
 
 function point(values: readonly number[], t: number): BarycentricPoint4 {
@@ -636,7 +636,7 @@ function makeImmiscibleModel() {
         "eutectic-solid-three",
         "α + β + γ 三固相区 (α + β + γ)",
         "three",
-        PHASE_COLORS.three,
+        0xe11d48,
         "down",
         prismGeometry(
           [
@@ -1012,7 +1012,7 @@ function makeLimitedModel() {
         "alpha-beta",
         "α + β 固态两相区 (α + β)",
         "two",
-        PHASE_COLORS.twoDark,
+        0x0d9488,
         "down",
         twoSolidGeometry(
           solidCurves.abAlpha,
@@ -1025,7 +1025,7 @@ function makeLimitedModel() {
         "beta-gamma",
         "β + γ 固态两相区 (β + γ)",
         "two",
-        0x0d7f75,
+        0x65a30d,
         "down",
         twoSolidGeometry(
           solidCurves.bcBeta,
@@ -1038,7 +1038,7 @@ function makeLimitedModel() {
         "gamma-alpha",
         "γ + α 固态两相区 (γ + α)",
         "two",
-        0x17c7b4,
+        0x4f46e5,
         "down",
         twoSolidGeometry(
           solidCurves.caGamma,
@@ -1051,7 +1051,7 @@ function makeLimitedModel() {
         "limited-solid-three",
         "α + β + γ 三固相区 (α + β + γ)",
         "three",
-        PHASE_COLORS.three,
+        0xe11d48,
         "down",
         prismGeometry(
           [bottom.a, bottom.b, bottom.c],

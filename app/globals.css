@@ -619,23 +619,23 @@ input:focus-visible {
 }
 
 .legend-swatch.liquid {
-  color: #3b82f6;
-  background: #1e3a8a;
+  color: #60a5fa;
+  background: #1d4ed8;
 }
 
 .legend-swatch.two {
-  color: #2dd4bf;
-  background: #14b8a6;
+  color: #22d3ee;
+  background: #06b6d4;
 }
 
 .legend-swatch.solid {
-  color: #f59e0b;
-  background: #d97706;
+  color: #fbbf24;
+  background: #f59e0b;
 }
 
 .legend-swatch.three {
-  color: #fb7185;
-  background: #f43f5e;
+  color: #fda4af;
+  background: #fb7185;
 }
 
 .interaction-hints {
@@ -750,15 +750,15 @@ kbd {
 }
 
 .filter-indicator.single {
-  background: linear-gradient(#3b82f6 0 48%, #d97706 52%);
+  background: linear-gradient(#1d4ed8 0 48%, #f59e0b 52%);
 }
 
 .filter-indicator.two {
-  background: #14b8a6;
+  background: #06b6d4;
 }
 
 .filter-indicator.three {
-  background: #f43f5e;
+  background: #fb7185;
 }
 
 .filter-row strong,
@@ -1446,9 +1446,47 @@ kbd {
   margin-top: 10px;
 }
 
+/* 功能模块文字统一提升一级；只作用于左侧功能控制区。 */
+.control-panel > .panel-heading {
+  font-size: 18px;
+}
+
+.control-panel .control-label,
+.control-panel .control-label strong {
+  font-size: 13px;
+}
+
+.control-panel .formula,
+.control-panel .input-grid label span,
+.control-panel .button-state,
+.control-panel .analysis-title small,
+.control-panel .analysis-card dl > div {
+  font-size: 9px;
+}
+
+.control-panel .range-scale,
+.control-panel .explode-button small,
+.control-panel .computed-row,
+.control-panel .computed-row .invalid-value,
+.control-panel .ghost-button,
+.control-panel .analysis-card.error {
+  font-size: 10px;
+}
+
+.control-panel .helper,
+.control-panel .primary-button {
+  font-size: 11px;
+}
+
+.control-panel .explode-button strong,
+.control-panel .input-grid input,
+.control-panel .analysis-title strong {
+  font-size: 12px;
+}
+
 .legend-swatch.four {
-  color: #8b5cf6;
-  background: #8b5cf6;
+  color: #facc15;
+  background: #facc15;
 }
 
 .phase-swatch {

@@ -58,6 +58,20 @@ test("only the two eutectic teaching models expose an independently filterable f
   }
 });
 
+test("limited four-phase plane exactly overlaps the three-solid prism top", () => {
+  const layers = layersFor("limited");
+  const plane = layers.find((layer) => layer.id === "limited-four-phase-plane");
+  const solid = layers.find((layer) => layer.id === "limited-solid-three");
+  assert.ok(plane?.geometry);
+  assert.ok(solid?.geometry);
+
+  const solidTopFace = solid.geometry.faces[1];
+  const solidTopVertices = solidTopFace.map(
+    (index) => solid.geometry.vertices[index],
+  );
+  assert.deepEqual(plane.geometry.vertices, solidTopVertices);
+});
+
 test("solidification path starts at liquid and crosses rendered regions from high to low temperature", () => {
   for (const model of MODELS) {
     const path = phasePathAtComposition(model, 33, 34);
