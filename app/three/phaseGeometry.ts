@@ -190,9 +190,11 @@ export function layersFor(model: ModelKey): LayerSpec[] {
     (spec) => spec.id === "limited-solid-three",
   );
   const limitedSolidTopFace = limitedSolidThree?.geometry.faces[1];
-  const limitedSolidTopVertices = limitedSolidTopFace?.map(
-    (index) => limitedSolidThree.geometry.vertices[index],
-  );
+  const limitedSolidTopVertices = limitedSolidThree
+    ? limitedSolidTopFace?.map(
+        (index) => limitedSolidThree.geometry.vertices[index],
+      )
+    : undefined;
   const fourPhaseVertices =
     model === "limited" && limitedSolidTopVertices?.length === 3
       ? limitedSolidTopVertices
