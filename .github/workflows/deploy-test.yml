@@ -1,0 +1,113 @@
+name: Deploy dev to Alibaba Cloud test
+
+on:
+  push:
+    branches:
+      - dev
+  workflow_dispatch:
+
+concurrency:
+  group: ternary-phase-lab-dev
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test-build-deploy:
+    if: github.ref == 'refs/heads/dev'
+    name: Test, build and deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: test
+      url: http://123.57.11.145:8080/ternary/
+    env:
+      DEPLOY_ROOT: /var/www/ternary-dev
+      DEV_SSH_HOST: ${{ secrets.DEV_SSH_HOST }}
+      DEV_SSH_PORT: ${{ secrets.DEV_SSH_PORT }}
+      DEV_SSH_USER: ${{ secrets.DEV_SSH_USER }}
+
+    steps:
+      - name: Check out dev
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Run phase-geometry tests
+        run: npm run test:phase
+
+      - name: Build static test package
+        run: npm run build:static
+
+      - name: Write deployment metadata
+        run: |
+          deployed_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          printf '{"version":"dev","commit":"%s","deployedAt":"%s","environment":"test"}\n' \
+            "$GITHUB_SHA" "$deployed_at" > static-dist/release.json
+          printf '%s\n' "$GITHUB_SHA" > static-dist/REVISION
+
+      - name: Prepare deployment archive
+        run: tar -C static-dist -czf "/tmp/ternary-${GITHUB_SHA}.tgz" .
+
+      - name: Install password login support
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes sshpass
+
+      - name: Configure pinned password SSH access
+        env:
+          DEV_SSH_PASSWORD: ${{ secrets.DEV_SSH_PASSWORD }}
+          DEV_SSH_KNOWN_HOSTS: ${{ secrets.DEV_SSH_KNOWN_HOSTS }}
+        run: |
+          test -n "$DEV_SSH_HOST"
+          test -n "$DEV_SSH_PORT"
+          test -n "$DEV_SSH_USER"
+          test -n "$DEV_SSH_PASSWORD"
+          test -n "$DEV_SSH_KNOWN_HOSTS"
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$DEV_SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Upload immutable release
+        env:
+          SSHPASS: ${{ secrets.DEV_SSH_PASSWORD }}
+        run: |
+          sshpass -e scp \
+            -o PreferredAuthentications=password \
+            -o PubkeyAuthentication=no \
+            -P "$DEV_SSH_PORT" \
+            "/tmp/ternary-${GITHUB_SHA}.tgz" \
+            scripts/deploy-test.sh \
+            "$DEV_SSH_USER@$DEV_SSH_HOST:/tmp/"
+
+      - name: Activate and verify release
+        env:
+          SSHPASS: ${{ secrets.DEV_SSH_PASSWORD }}
+        run: |
+          sshpass -e ssh \
+            -o PreferredAuthentications=password \
+            -o PubkeyAuthentication=no \
+            -p "$DEV_SSH_PORT" \
+            "$DEV_SSH_USER@$DEV_SSH_HOST" \
+            "DEPLOY_ROOT='$DEPLOY_ROOT' bash /tmp/deploy-test.sh '/tmp/ternary-${GITHUB_SHA}.tgz' '$GITHUB_SHA'"
+
+      - name: Verify public test URL
+        run: |
+          curl --fail --silent --show-error \
+            --retry 5 --retry-delay 2 \
+            "http://$DEV_SSH_HOST:8080/ternary/release.json" \
+            | grep --fixed-strings "\"commit\":\"$GITHUB_SHA\""
