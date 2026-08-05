@@ -244,7 +244,7 @@ export default function TernaryLab() {
           </div>
           <div>
             <h1>材科基 · 三元相图3D可视化实验室</h1>
-            <span className="brand-subtitle">Materials Fundamentals Ternary Phase Lab</span>
+            <span className="brand-subtitle">畅研材料考研交流群：692990403</span>
           </div>
         </div>
         <div className="top-actions">
