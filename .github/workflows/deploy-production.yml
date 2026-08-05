@@ -51,6 +51,8 @@ jobs:
         run: npm run test:phase
 
       - name: Build static production package
+        env:
+          TERNARY_BASE_PATH: /
         run: npm run build:static
 
       - name: Write deployment metadata

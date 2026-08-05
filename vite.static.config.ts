@@ -2,7 +2,7 @@ import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
 export default defineConfig({
-  base: "/ternary/",
+  base: process.env.TERNARY_BASE_PATH ?? "/ternary/",
   plugins: [react()],
   build: {
     outDir: "static-dist",
