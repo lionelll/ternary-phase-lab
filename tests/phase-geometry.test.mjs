@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import * as THREE from "three";
 
 import {
   layersFor,
@@ -16,8 +17,55 @@ import {
   REFERENCE_CONTROL_POINTS,
   referenceLayersFor,
 } from "../app/three/eutecticModels.ts";
+import {
+  makePlaneIntersectionGeometry,
+  makeVerticalSectionPlane,
+  makeVerticalSectionWallGeometry,
+} from "../app/three/verticalSection.ts";
 
 const MODELS = ["isomorphous", "eutectic", "limited"];
+
+test("vertical section plane contains P1, P2 and the full temperature direction", () => {
+  const first = new THREE.Vector3(-4, 0, -2);
+  const second = new THREE.Vector3(5, 0, 3);
+  const plane = makeVerticalSectionPlane(first, second);
+  assert.ok(Math.abs(plane.distanceToPoint(first)) < 1e-10);
+  assert.ok(Math.abs(plane.distanceToPoint(second)) < 1e-10);
+  assert.ok(
+    Math.abs(plane.distanceToPoint(first.clone().setY(TOP_Y))) < 1e-10,
+  );
+  assert.ok(Math.abs(plane.normal.y) < 1e-12);
+});
+
+test("vertical laser wall spans P1-P2 from the base to model height", () => {
+  const first = new THREE.Vector3(-2, 0, 1);
+  const second = new THREE.Vector3(3, 0, -1);
+  const geometry = makeVerticalSectionWallGeometry(first, second, TOP_Y);
+  const positions = geometry.getAttribute("position");
+  assert.equal(positions.count, 4);
+  const heights = Array.from(
+    { length: positions.count },
+    (_, index) => positions.getY(index),
+  );
+  assert.deepEqual(heights.slice(0, 2), [0, 0]);
+  assert.ok(heights.slice(2).every((height) => Math.abs(height - TOP_Y) < 1e-5));
+});
+
+test("triangle-plane intersections stay on the plane and remove coplanar diagonals", () => {
+  const cuttingPlane = new THREE.Plane(new THREE.Vector3(1, 0, 0), 0);
+  const box = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2));
+  const boxLines = makePlaneIntersectionGeometry([box], cuttingPlane);
+  const boxPositions = boxLines.getAttribute("position");
+  assert.ok(boxPositions.count >= 8);
+  for (let index = 0; index < boxPositions.count; index += 1) {
+    assert.ok(Math.abs(boxPositions.getX(index)) < 1e-6);
+  }
+
+  const coplanarMesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2));
+  const coplanarPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+  const boundary = makePlaneIntersectionGeometry([coplanarMesh], coplanarPlane);
+  assert.equal(boundary.getAttribute("position").count, 8);
+});
 
 test("composition analysis only returns rendered phase ids", () => {
   for (const model of MODELS) {

@@ -170,6 +170,11 @@ input:focus-visible {
   box-shadow: 0 0 10px rgba(52, 211, 153, 0.45);
 }
 
+.accent-line.violet {
+  background: #a78bfa;
+  box-shadow: 0 0 10px rgba(167, 139, 250, 0.5);
+}
+
 .range {
   width: 100%;
   margin: 17px 0 7px;
@@ -1435,6 +1440,94 @@ kbd {
 
 .composition-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.vertical-point-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 11px;
+}
+
+.vertical-point-card {
+  padding: 9px;
+  border: 1px solid rgba(100, 116, 139, 0.25);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.42);
+}
+
+.vertical-point-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: #94a3b8;
+  font-size: 9px;
+}
+
+.vertical-point-heading strong {
+  color: #ddd6fe;
+  font-size: 11px;
+}
+
+.vertical-point-heading .invalid-value {
+  color: #fca5a5;
+}
+
+.vertical-point-inputs {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 8px;
+}
+
+.vertical-mode-toggle {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+  margin-top: 10px;
+  padding: 4px;
+  border: 1px solid rgba(100, 116, 139, 0.25);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.5);
+}
+
+.vertical-mode-toggle button {
+  min-height: 33px;
+  padding: 5px 7px;
+  color: #718096;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 750;
+  transition: 170ms ease;
+}
+
+.vertical-mode-toggle button:hover {
+  color: #cbd5e1;
+  background: rgba(51, 65, 85, 0.4);
+}
+
+.vertical-mode-toggle button.active {
+  color: #e0f2fe;
+  border-color: rgba(34, 211, 238, 0.36);
+  background: rgba(8, 145, 178, 0.18);
+}
+
+.vertical-section-ready {
+  margin-top: 10px;
+  padding: 9px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: #fef08a;
+  border: 1px solid rgba(255, 234, 0, 0.28);
+  border-radius: 8px;
+  background: rgba(113, 63, 18, 0.18);
+  font-size: 9px;
+}
+
+.vertical-section-ready span {
+  color: #a3a38c;
 }
 
 .accent-line.amber {

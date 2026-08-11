@@ -14,6 +14,7 @@ import {
 } from "./three/phaseGeometry";
 import {
   type PhaseSceneController,
+  type VerticalSectionMode,
   type VertexLabelPositions,
   createPhaseScene,
 } from "./three/phaseScene";
@@ -64,6 +65,11 @@ const EMPTY_VERTEX_LABELS: VertexLabelPositions = {
   C: { x: 0, y: 0, visible: false },
 };
 
+const DEFAULT_VERTICAL_POINTS = {
+  p1: { a: 70, b: 20 },
+  p2: { a: 20, b: 70 },
+} as const;
+
 function visibilityForModel(model: ModelKey) {
   return Object.fromEntries(layersFor(model).map((phase) => [phase.id, true]));
 }
@@ -102,6 +108,17 @@ export default function TernaryLab() {
   const [analysis, setAnalysis] = useState<
     | { error: string }
     | { c: number; path: PhaseResult[]; a: number; b: number }
+    | null
+  >(null);
+  const [verticalPoints, setVerticalPoints] = useState(() => ({
+    p1: { ...DEFAULT_VERTICAL_POINTS.p1 },
+    p2: { ...DEFAULT_VERTICAL_POINTS.p2 },
+  }));
+  const [verticalMode, setVerticalMode] =
+    useState<VerticalSectionMode>("holographic");
+  const [verticalSectionStatus, setVerticalSectionStatus] = useState<
+    | { error: string }
+    | { active: true }
     | null
   >(null);
 
@@ -224,7 +241,54 @@ export default function TernaryLab() {
     setAnalysis({ c, path, a, b });
   }
 
-  /** 一次性把相机、等温截面、相图拆解、相区可见性与凝固路径全部恢复到初始状态。 */
+  function clearVerticalSection() {
+    sceneController.current?.clearVerticalSection();
+    setVerticalSectionStatus(null);
+  }
+
+  function changeVerticalMode(nextMode: VerticalSectionMode) {
+    setVerticalMode(nextMode);
+    sceneController.current?.setVerticalSectionMode(nextMode);
+  }
+
+  function generateVerticalSection() {
+    const first = verticalPoints.p1;
+    const second = verticalPoints.p2;
+    const firstC = 100 - first.a - first.b;
+    const secondC = 100 - second.a - second.b;
+    const valid = [first.a, first.b, firstC, second.a, second.b, secondC]
+      .every((value) => Number.isFinite(value) && value >= 0);
+
+    if (!valid) {
+      sceneController.current?.clearVerticalSection();
+      setVerticalSectionStatus({
+        error: "输入无效：两个点的 A、B 均需非负，且 A + B ≤ 100%。",
+      });
+      return;
+    }
+    if (
+      Math.abs(first.a - second.a) < 1e-7 &&
+      Math.abs(first.b - second.b) < 1e-7
+    ) {
+      sceneController.current?.clearVerticalSection();
+      setVerticalSectionStatus({ error: "点 1 与点 2 不能重合。" });
+      return;
+    }
+
+    const controller = sceneController.current;
+    if (exploded) {
+      controller?.setExploded(false, temperature);
+      setExploded(false);
+    }
+    controller?.setVerticalSection(
+      positionFromComposition(first.a, first.b, 0),
+      positionFromComposition(second.a, second.b, 0),
+      verticalMode,
+    );
+    setVerticalSectionStatus({ active: true });
+  }
+
+  /** 一次性把相机、截面、相图拆解、相区可见性与凝固路径全部恢复到初始状态。 */
   function resetAll() {
     const nextFilters = { ...ALL_VISIBLE };
     const nextVisibility = visibilityForModel(model);
@@ -235,15 +299,24 @@ export default function TernaryLab() {
     controller?.setFilters(nextFilters);
     controller?.setPhaseVisibility(nextVisibility);
     controller?.clearCompositionPath();
+    controller?.clearVerticalSection();
     setTemperature(100);
     setExploded(false);
     setFilters(nextFilters);
     setPhaseVisibility(nextVisibility);
     setAnalysis(null);
+    setVerticalPoints({
+      p1: { ...DEFAULT_VERTICAL_POINTS.p1 },
+      p2: { ...DEFAULT_VERTICAL_POINTS.p2 },
+    });
+    setVerticalMode("holographic");
+    setVerticalSectionStatus(null);
     setSelectedPhase(null);
   }
 
   const computedC = 100 - composition.a - composition.b;
+  const verticalC1 = 100 - verticalPoints.p1.a - verticalPoints.p1.b;
+  const verticalC2 = 100 - verticalPoints.p2.a - verticalPoints.p2.b;
 
   return (
     <main className="lab-shell">
@@ -271,7 +344,7 @@ export default function TernaryLab() {
             className="top-action-button"
             type="button"
             onClick={resetAll}
-            title="恢复相机视角、等温截面、相图拆解与相区可见性"
+            title="恢复相机视角、水平/垂直截面、相图拆解与相区可见性"
           >
             <HomeIcon />
             <span>重置全部</span>
@@ -344,6 +417,122 @@ export default function TernaryLab() {
               <p className="helper">
                 拖动切开三维相区，青色激光面对应当前二维等温截面。
               </p>
+              </div>
+
+              <div className="divider" />
+
+              <div className="control-section vertical-section-control">
+                <div className="control-label">
+                  <div>
+                    <span className="accent-line violet" />
+                    垂直截面分析
+                  </div>
+                  <span className="formula">P1 — P2</span>
+                </div>
+
+                <div className="vertical-point-list">
+                  {(["p1", "p2"] as const).map((pointKey, pointIndex) => {
+                    const point = verticalPoints[pointKey];
+                    const c = pointKey === "p1" ? verticalC1 : verticalC2;
+                    return (
+                      <div className="vertical-point-card" key={pointKey}>
+                        <div className="vertical-point-heading">
+                          <strong>点 {pointIndex + 1}</strong>
+                          <span className={c < 0 ? "invalid-value" : undefined}>
+                            C {c < 0 ? "无效" : `${c.toFixed(1)}%`}
+                          </span>
+                        </div>
+                        <div className="input-grid vertical-point-inputs">
+                          {(["a", "b"] as const).map((field) => (
+                            <label key={field}>
+                              <span>{field.toUpperCase()} (%)</span>
+                              <input
+                                type="number"
+                                min="0"
+                                max="100"
+                                value={point[field]}
+                                onChange={(event) =>
+                                  setVerticalPoints((current) => ({
+                                    ...current,
+                                    [pointKey]: {
+                                      ...current[pointKey],
+                                      [field]: Number(event.target.value),
+                                    },
+                                  }))
+                                }
+                                aria-label={`点 ${pointIndex + 1} ${field.toUpperCase()} (%)`}
+                              />
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div
+                  className="vertical-mode-toggle"
+                  role="group"
+                  aria-label="垂直截面显示模式"
+                >
+                  <button
+                    type="button"
+                    className={verticalMode === "clip" ? "active" : undefined}
+                    aria-pressed={verticalMode === "clip"}
+                    onClick={() => changeVerticalMode("clip")}
+                  >
+                    垂直剖切模式
+                  </button>
+                  <button
+                    type="button"
+                    className={verticalMode === "holographic" ? "active" : undefined}
+                    aria-pressed={verticalMode === "holographic"}
+                    onClick={() => changeVerticalMode("holographic")}
+                  >
+                    全息透视模式
+                  </button>
+                </div>
+
+                <div className="button-row vertical-section-buttons">
+                  <button
+                    type="button"
+                    className="primary-button"
+                    onClick={generateVerticalSection}
+                  >
+                    <span aria-hidden="true">╱</span> 生成垂直截面
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    onClick={clearVerticalSection}
+                    disabled={!verticalSectionStatus}
+                  >
+                    清除
+                  </button>
+                </div>
+
+                {verticalSectionStatus && (
+                  <div
+                    className={
+                      "error" in verticalSectionStatus
+                        ? "analysis-card error"
+                        : "vertical-section-ready"
+                    }
+                  >
+                    {"error" in verticalSectionStatus ? (
+                      <p>{verticalSectionStatus.error}</p>
+                    ) : (
+                      <>
+                        <strong>截面已生成</strong>
+                        <span>黄色高亮线为切面截出的全部相界线</span>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                <p className="helper">
+                  选择两个成分点生成垂直激光切面；生成截面时会自动复原拆解状态。
+                </p>
               </div>
 
               <div className="divider" />
