@@ -72,6 +72,16 @@ function displayPhaseName(name: string) {
   return name.replace(/\s*\([^)]*\)\s*$/, "").trim();
 }
 
+/** 匀晶与完全不互溶模型的组元在右侧相区信息中使用 A / B / C 表示。 */
+function displayPhaseListName(name: string, model: ModelKey) {
+  const displayName = displayPhaseName(name);
+  if (model === "limited") return displayName;
+  return displayName
+    .replaceAll("α", "A")
+    .replaceAll("β", "B")
+    .replaceAll("γ", "C");
+}
+
 export default function TernaryLab() {
   const canvasHost = useRef<HTMLDivElement>(null);
   const sceneController = useRef<PhaseSceneController | null>(null);
@@ -487,6 +497,7 @@ export default function TernaryLab() {
           </div>
 
           <div className="phase-legend">
+            <span><i className="legend-swatch liquid" /> 液相</span>
             <span><i className="legend-swatch two" /> 两相</span>
             <span><i className="legend-swatch solid" /> 固相</span>
             <span><i className="legend-swatch three" /> 三相</span>
@@ -508,7 +519,7 @@ export default function TernaryLab() {
             <div className="card-title">当前所选相区</div>
             <div className="status-card">
               <strong style={{ color: statusAccent }}>
-                {displayPhaseName(selectedPhase ?? sliceStatus.title)}
+                {displayPhaseListName(selectedPhase ?? sliceStatus.title, model)}
               </strong>
               <p>点击空白处可取消高亮</p>
             </div>
@@ -537,7 +548,7 @@ export default function TernaryLab() {
                       className="phase-swatch"
                       style={{ background: `#${phase.color.toString(16).padStart(6, "0")}` }}
                     />
-                    <span>{displayPhaseName(phase.name)}</span>
+                    <span>{displayPhaseListName(phase.name, model)}</span>
                   </label>
                 ))}
               </div>

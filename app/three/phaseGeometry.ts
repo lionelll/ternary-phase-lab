@@ -225,13 +225,11 @@ export function layersFor(model: ModelKey): LayerSpec[] {
   if (referenceSpecs) {
     const emptySurface: SurfaceFn = () => 0;
     return [
-      ...referenceSpecs
-        .filter((spec) => spec.id !== "liquid")
-        .map((spec) => ({
-          ...spec,
-          bottom: emptySurface,
-          top: emptySurface,
-        })),
+      ...referenceSpecs.map((spec) => ({
+        ...spec,
+        bottom: emptySurface,
+        top: emptySurface,
+      })),
       fourPhasePlane,
     ];
   }
@@ -259,6 +257,15 @@ export function layersFor(model: ModelKey): LayerSpec[] {
         bottom: solidus,
         top: liquidus,
         explode: "center",
+      },
+      {
+        id: "liquid",
+        name: "液相区 (Liquid)",
+        category: "single",
+        color: PHASE_COLORS.liquid,
+        bottom: liquidus,
+        top,
+        explode: "up",
       },
     ];
   }
@@ -349,7 +356,7 @@ export function layersFor(model: ModelKey): LayerSpec[] {
         id: "liquid-gamma",
         name: "L + γ 两相区 (L + γ)",
         category: "two",
-        color: 0x2563eb,                     // L+γ 两相（twoPhase 压暗）
+        color: 0x8b5cf6,                     // L+γ 两相（紫罗兰，与液相蓝鲜明区分）
         bottom: invariantTop!,
         top: liquidus,
         explode: "center",
@@ -482,7 +489,7 @@ export function layersFor(model: ModelKey): LayerSpec[] {
       id: "liquid-gamma",
       name: "L + γ 两相区 (L + γ)",
       category: "two",
-      color: 0x2563eb,                     // L+γ 两相
+      color: 0x8b5cf6,                     // L+γ 两相（紫罗兰，与液相蓝鲜明区分）
       bottom: invariantTop!,
       top: liquidus,
       explode: "center",

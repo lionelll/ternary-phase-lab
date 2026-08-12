@@ -19,7 +19,7 @@ import {
 
 const MODELS = ["isomorphous", "eutectic", "limited"];
 
-test("composition analysis returns rendered phase ids except the intentionally hidden liquid phase", () => {
+test("composition analysis only returns rendered phase ids", () => {
   for (const model of MODELS) {
     const renderedIds = new Set(layersFor(model).map((layer) => layer.id));
     for (let a = 0; a <= 100; a += 10) {
@@ -27,7 +27,7 @@ test("composition analysis returns rendered phase ids except the intentionally h
         for (let temperature = 0; temperature <= 100; temperature += 5) {
           const result = phaseAt(model, a, b, temperature);
           assert.ok(
-            renderedIds.has(result.meshId) || result.meshId === "liquid",
+            renderedIds.has(result.meshId),
             `${model} returned non-rendered phase ${result.meshId}`,
           );
         }
@@ -36,12 +36,24 @@ test("composition analysis returns rendered phase ids except the intentionally h
   }
 });
 
-test("pure liquid bodies are hidden in all three models", () => {
+test("all three models expose an independently rendered liquid region", () => {
   for (const model of MODELS) {
-    assert.equal(
-      layersFor(model).some((layer) => layer.id === "liquid"),
-      false,
-    );
+    const liquid = layersFor(model).filter((layer) => layer.id === "liquid");
+    assert.equal(liquid.length, 1);
+    assert.equal(liquid[0].category, "single");
+    assert.equal(liquid[0].explode, "up");
+  }
+});
+
+test("both eutectic models distinguish liquid + C from the liquid region", () => {
+  for (const model of ["eutectic", "limited"]) {
+    const layers = layersFor(model);
+    const liquid = layers.find((layer) => layer.id === "liquid");
+    const liquidC = layers.find((layer) => layer.id === "liquid-gamma");
+    assert.ok(liquid);
+    assert.ok(liquidC);
+    assert.equal(liquidC.color, 0x8b5cf6);
+    assert.notEqual(liquidC.color, liquid.color);
   }
 });
 
@@ -236,10 +248,14 @@ test("liquidus meets each model's exact ternary eutectic point", () => {
   }
 });
 
-test("isomorphous composition topology remains unchanged and has no four-phase plane", () => {
+test("isomorphous model exposes liquid without adding a four-phase plane", () => {
   assert.deepEqual(
     layersFor("isomorphous").map((item) => item.id),
-    ["alpha-solid", "liquid-alpha"],
+    ["alpha-solid", "liquid-alpha", "liquid"],
+  );
+  assert.equal(
+    layersFor("isomorphous").some((item) => item.category === "four"),
+    false,
   );
   assert.equal(phaseAt("isomorphous", 30, 40, 50).meshId, "liquid-alpha");
 
