@@ -27,12 +27,6 @@ import {
   setPhaseVisualHighlight,
   setPhaseVisualPathHighlight,
 } from "./phaseGeometry";
-import {
-  extendSectionLineToTriangle,
-  makePlaneIntersectionGeometry,
-  makeVerticalSectionPlane,
-  makeVerticalSectionWallGeometry,
-} from "./verticalSection";
 
 /**
  * 渲染质量档位。仅在场景内部使用：帧率采样低于 45fps 时自动降级。
@@ -44,8 +38,6 @@ export type PhaseSelection = {
   id: string;
   name: string;
 };
-
-export type VerticalSectionMode = "clip" | "holographic";
 
 export type VertexLabelPositions = Record<
   "A" | "B" | "C",
@@ -61,13 +53,6 @@ export type PhaseSceneController = {
   setHighlight: (phaseId: string | null) => void;
   setCompositionPath: (position: THREE.Vector3, phaseIds: string[]) => void;
   clearCompositionPath: () => void;
-  setVerticalSection: (
-    first: THREE.Vector3,
-    second: THREE.Vector3,
-    mode: VerticalSectionMode,
-  ) => void;
-  setVerticalSectionMode: (mode: VerticalSectionMode) => void;
-  clearVerticalSection: () => void;
   setTopView: () => void;
   resetView: () => void;
   dispose: () => void;
@@ -230,61 +215,6 @@ export function createPhaseScene({
   invariantPoint.traverse((object) => object.layers.set(1));
   scene.add(invariantPoint);
 
-  const verticalSectionGroup = new THREE.Group();
-  verticalSectionGroup.name = "vertical-section";
-  verticalSectionGroup.visible = false;
-  const verticalSectionWallMaterial = new THREE.MeshBasicMaterial({
-    color: 0x00ffff,
-    transparent: true,
-    opacity: 0.25,
-    side: THREE.DoubleSide,
-    depthTest: false,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-  });
-  const verticalSectionWall = new THREE.Mesh(
-    new THREE.BufferGeometry(),
-    verticalSectionWallMaterial,
-  );
-  verticalSectionWall.name = "vertical-section-wall";
-  verticalSectionWall.renderOrder = 997;
-
-  const verticalSectionWallEdgeMaterial = new THREE.LineBasicMaterial({
-    color: 0x00ffff,
-    transparent: true,
-    opacity: 0.9,
-    depthTest: false,
-    depthWrite: false,
-  });
-  const verticalSectionWallEdges = new THREE.LineSegments(
-    new THREE.BufferGeometry(),
-    verticalSectionWallEdgeMaterial,
-  );
-  verticalSectionWallEdges.name = "vertical-section-wall-edges";
-  verticalSectionWallEdges.renderOrder = 998;
-
-  const verticalSectionIntersectionMaterial = new THREE.LineBasicMaterial({
-    color: 0xffea00,
-    linewidth: 3,
-    transparent: true,
-    opacity: 1,
-    depthTest: false,
-    depthWrite: false,
-  });
-  const verticalSectionIntersections = new THREE.LineSegments(
-    new THREE.BufferGeometry(),
-    verticalSectionIntersectionMaterial,
-  );
-  verticalSectionIntersections.name = "vertical-section-boundaries";
-  verticalSectionIntersections.renderOrder = 999;
-  verticalSectionIntersections.frustumCulled = false;
-  verticalSectionGroup.add(
-    verticalSectionWall,
-    verticalSectionWallEdges,
-    verticalSectionIntersections,
-  );
-  scene.add(verticalSectionGroup);
-
   // 后期只保留抗锯齿：SMAA 让相界线在半透明面上依然平滑（PRD 四.2 的要求）。
   // 不加 SSAO —— 相区体是半透明的，屏幕空间环境光遮蔽会在透明面之间算出错误的暗带。
   const renderPass = new RenderPass(scene, camera);
@@ -299,10 +229,6 @@ export function createPhaseScene({
   let phaseVisuals: PhaseVisual[] = [];
   let currentTemperature = 100;
   let currentExploded = false;
-  let verticalSectionMode: VerticalSectionMode = "holographic";
-  let verticalSectionPlane: THREE.Plane | null = null;
-  let verticalSectionFirst: THREE.Vector3 | null = null;
-  let verticalSectionSecond: THREE.Vector3 | null = null;
   let currentFilters: Record<PhaseCategory, boolean> = {
     single: true,
     two: true,
@@ -416,109 +342,6 @@ export function createPhaseScene({
     phaseVisuals = [];
   }
 
-  function disposeVerticalSectionVisuals() {
-    disposeObject(verticalSectionGroup);
-    verticalSectionGroup.clear();
-  }
-
-  function replaceVerticalSectionGeometry(
-    object: THREE.Mesh | THREE.LineSegments,
-    geometry: THREE.BufferGeometry,
-  ) {
-    object.geometry.dispose();
-    object.geometry = geometry;
-  }
-
-  function updateVerticalClippingPlanes() {
-    // 材质裁剪面向保留侧内移极小距离，避免截面恰好落在三棱柱外壁时
-    // 共面片元在浮点误差下产生斑驳闪烁；求交线和激光墙仍使用精确原平面。
-    const materialVerticalPlane = verticalSectionPlane?.clone();
-    if (materialVerticalPlane) materialVerticalPlane.constant += 0.002;
-    const activePlanes =
-      materialVerticalPlane && verticalSectionMode === "clip"
-        ? [slicePlane, materialVerticalPlane]
-        : [slicePlane];
-    phaseVisuals.forEach((visual) => {
-      visual.frontMaterial.clippingPlanes = activePlanes;
-      visual.edgeMaterial.clippingPlanes = activePlanes;
-      // 垂直截面启用后由统一拓扑生成的黄色交线承担相界展示。
-      // 隐藏各相区自带的独立白色边界，可避免同一逻辑边界与截面交线
-      // 同屏叠加时形成颜色不同、位置略偏的“双线”；清除截面后自动恢复。
-      visual.edgeMesh.visible = verticalSectionPlane === null;
-      visual.frontMaterial.needsUpdate = true;
-      visual.edgeMaterial.needsUpdate = true;
-    });
-  }
-
-  function refreshVerticalSectionVisuals() {
-    if (
-      !verticalSectionPlane ||
-      !verticalSectionFirst ||
-      !verticalSectionSecond
-    ) {
-      verticalSectionGroup.visible = false;
-      updateVerticalClippingPlanes();
-      return;
-    }
-
-    const [wallFirst, wallSecond] = extendSectionLineToTriangle(
-      verticalSectionFirst,
-      verticalSectionSecond,
-      [A_VERTEX, B_VERTEX, C_VERTEX],
-    );
-    const wallGeometry = makeVerticalSectionWallGeometry(
-      wallFirst,
-      wallSecond,
-      TOP_Y,
-    );
-    replaceVerticalSectionGeometry(verticalSectionWall, wallGeometry);
-    replaceVerticalSectionGeometry(
-      verticalSectionWallEdges,
-      new THREE.EdgesGeometry(wallGeometry),
-    );
-
-    const intersectionGeometry = makePlaneIntersectionGeometry(
-      phaseVisuals.map((visual) => visual.pickMesh),
-      verticalSectionPlane,
-      undefined,
-      false,
-    );
-    replaceVerticalSectionGeometry(
-      verticalSectionIntersections,
-      intersectionGeometry,
-    );
-    verticalSectionGroup.visible = !currentExploded;
-    updateVerticalClippingPlanes();
-  }
-
-  function setVerticalSection(
-    first: THREE.Vector3,
-    second: THREE.Vector3,
-    mode: VerticalSectionMode,
-  ) {
-    verticalSectionFirst = first.clone().setY(0);
-    verticalSectionSecond = second.clone().setY(0);
-    verticalSectionPlane = makeVerticalSectionPlane(
-      verticalSectionFirst,
-      verticalSectionSecond,
-    );
-    verticalSectionMode = mode;
-    refreshVerticalSectionVisuals();
-  }
-
-  function setVerticalSectionMode(mode: VerticalSectionMode) {
-    verticalSectionMode = mode;
-    updateVerticalClippingPlanes();
-  }
-
-  function clearVerticalSection() {
-    verticalSectionPlane = null;
-    verticalSectionFirst = null;
-    verticalSectionSecond = null;
-    verticalSectionGroup.visible = false;
-    updateVerticalClippingPlanes();
-  }
-
   function setHighlight(phaseId: string | null) {
     phaseVisuals.forEach((visual) => setPhaseVisualHighlight(visual, phaseId));
   }
@@ -565,8 +388,6 @@ export function createPhaseScene({
     const invariantPosition = invariantPointPosition(model);
     invariantPoint.visible = invariantPosition !== null;
     if (invariantPosition) invariantPoint.position.copy(invariantPosition);
-    if (verticalSectionPlane) refreshVerticalSectionVisuals();
-    else updateVerticalClippingPlanes();
     trackTarget(DEFAULT_CAMERA_TARGET);
     setHighlight(null);
     onPhaseSelect(null);
@@ -589,7 +410,6 @@ export function createPhaseScene({
     renderer.localClippingEnabled = !exploded;
     frame.visible = !exploded;
     slice.visible = !exploded && temperature < 100;
-    verticalSectionGroup.visible = !exploded && verticalSectionPlane !== null;
     phaseVisuals.forEach((visual) => {
       visual.root.userData.targetPosition = exploded
         ? visual.targetPosition.clone()
@@ -648,7 +468,6 @@ export function createPhaseScene({
     trackingTarget = false;
     currentExploded = false;
     compositionPath.visible = false;
-    clearVerticalSection();
     phaseVisuals.forEach((visual) => {
       visual.root.position.set(0, 0, 0);
       visual.root.scale.setScalar(1);
@@ -758,9 +577,6 @@ export function createPhaseScene({
     setHighlight,
     setCompositionPath,
     clearCompositionPath,
-    setVerticalSection,
-    setVerticalSectionMode,
-    clearVerticalSection,
     setTopView,
     resetView,
     dispose() {
@@ -775,7 +591,6 @@ export function createPhaseScene({
       disposeObject(slice);
       disposeObject(compositionPath);
       disposeObject(invariantPoint);
-      disposeVerticalSectionVisuals();
       composer.dispose();
       renderer.dispose();
       renderer.domElement.remove();
