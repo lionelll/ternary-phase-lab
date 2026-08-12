@@ -28,6 +28,7 @@ import {
   setPhaseVisualPathHighlight,
 } from "./phaseGeometry";
 import {
+  extendSectionLineToTriangle,
   makePlaneIntersectionGeometry,
   makeVerticalSectionPlane,
   makeVerticalSectionWallGeometry,
@@ -232,6 +233,56 @@ export function createPhaseScene({
   const verticalSectionGroup = new THREE.Group();
   verticalSectionGroup.name = "vertical-section";
   verticalSectionGroup.visible = false;
+  const verticalSectionWallMaterial = new THREE.MeshBasicMaterial({
+    color: 0x00ffff,
+    transparent: true,
+    opacity: 0.25,
+    side: THREE.DoubleSide,
+    depthTest: false,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  });
+  const verticalSectionWall = new THREE.Mesh(
+    new THREE.BufferGeometry(),
+    verticalSectionWallMaterial,
+  );
+  verticalSectionWall.name = "vertical-section-wall";
+  verticalSectionWall.renderOrder = 997;
+
+  const verticalSectionWallEdgeMaterial = new THREE.LineBasicMaterial({
+    color: 0x00ffff,
+    transparent: true,
+    opacity: 0.9,
+    depthTest: false,
+    depthWrite: false,
+  });
+  const verticalSectionWallEdges = new THREE.LineSegments(
+    new THREE.BufferGeometry(),
+    verticalSectionWallEdgeMaterial,
+  );
+  verticalSectionWallEdges.name = "vertical-section-wall-edges";
+  verticalSectionWallEdges.renderOrder = 998;
+
+  const verticalSectionIntersectionMaterial = new THREE.LineBasicMaterial({
+    color: 0xffea00,
+    linewidth: 3,
+    transparent: true,
+    opacity: 1,
+    depthTest: false,
+    depthWrite: false,
+  });
+  const verticalSectionIntersections = new THREE.LineSegments(
+    new THREE.BufferGeometry(),
+    verticalSectionIntersectionMaterial,
+  );
+  verticalSectionIntersections.name = "vertical-section-boundaries";
+  verticalSectionIntersections.renderOrder = 999;
+  verticalSectionIntersections.frustumCulled = false;
+  verticalSectionGroup.add(
+    verticalSectionWall,
+    verticalSectionWallEdges,
+    verticalSectionIntersections,
+  );
   scene.add(verticalSectionGroup);
 
   // 后期只保留抗锯齿：SMAA 让相界线在半透明面上依然平滑（PRD 四.2 的要求）。
@@ -370,6 +421,14 @@ export function createPhaseScene({
     verticalSectionGroup.clear();
   }
 
+  function replaceVerticalSectionGeometry(
+    object: THREE.Mesh | THREE.LineSegments,
+    geometry: THREE.BufferGeometry,
+  ) {
+    object.geometry.dispose();
+    object.geometry = geometry;
+  }
+
   function updateVerticalClippingPlanes() {
     // 材质裁剪面向保留侧内移极小距离，避免截面恰好落在三棱柱外壁时
     // 共面片元在浮点误差下产生斑驳闪烁；求交线和激光墙仍使用精确原平面。
@@ -382,13 +441,16 @@ export function createPhaseScene({
     phaseVisuals.forEach((visual) => {
       visual.frontMaterial.clippingPlanes = activePlanes;
       visual.edgeMaterial.clippingPlanes = activePlanes;
+      // 垂直截面启用后由统一拓扑生成的黄色交线承担相界展示。
+      // 隐藏各相区自带的独立白色边界，可避免同一逻辑边界与截面交线
+      // 同屏叠加时形成颜色不同、位置略偏的“双线”；清除截面后自动恢复。
+      visual.edgeMesh.visible = verticalSectionPlane === null;
       visual.frontMaterial.needsUpdate = true;
       visual.edgeMaterial.needsUpdate = true;
     });
   }
 
   function refreshVerticalSectionVisuals() {
-    disposeVerticalSectionVisuals();
     if (
       !verticalSectionPlane ||
       !verticalSectionFirst ||
@@ -399,37 +461,21 @@ export function createPhaseScene({
       return;
     }
 
-    const wallGeometry = makeVerticalSectionWallGeometry(
+    const [wallFirst, wallSecond] = extendSectionLineToTriangle(
       verticalSectionFirst,
       verticalSectionSecond,
+      [A_VERTEX, B_VERTEX, C_VERTEX],
+    );
+    const wallGeometry = makeVerticalSectionWallGeometry(
+      wallFirst,
+      wallSecond,
       TOP_Y,
     );
-    const wallMaterial = new THREE.MeshBasicMaterial({
-      color: 0x00ffff,
-      transparent: true,
-      opacity: 0.25,
-      side: THREE.DoubleSide,
-      depthTest: false,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-    });
-    const wall = new THREE.Mesh(wallGeometry, wallMaterial);
-    wall.name = "vertical-section-wall";
-    wall.renderOrder = 997;
-
-    const wallEdgeMaterial = new THREE.LineBasicMaterial({
-      color: 0x00ffff,
-      transparent: true,
-      opacity: 0.9,
-      depthTest: false,
-      depthWrite: false,
-    });
-    const wallEdges = new THREE.LineSegments(
+    replaceVerticalSectionGeometry(verticalSectionWall, wallGeometry);
+    replaceVerticalSectionGeometry(
+      verticalSectionWallEdges,
       new THREE.EdgesGeometry(wallGeometry),
-      wallEdgeMaterial,
     );
-    wallEdges.name = "vertical-section-wall-edges";
-    wallEdges.renderOrder = 998;
 
     const intersectionGeometry = makePlaneIntersectionGeometry(
       phaseVisuals.map((visual) => visual.pickMesh),
@@ -437,23 +483,10 @@ export function createPhaseScene({
       undefined,
       false,
     );
-    const intersectionMaterial = new THREE.LineBasicMaterial({
-      color: 0xffea00,
-      linewidth: 3,
-      transparent: true,
-      opacity: 1,
-      depthTest: false,
-      depthWrite: false,
-    });
-    const intersections = new THREE.LineSegments(
+    replaceVerticalSectionGeometry(
+      verticalSectionIntersections,
       intersectionGeometry,
-      intersectionMaterial,
     );
-    intersections.name = "vertical-section-boundaries";
-    intersections.renderOrder = 999;
-    intersections.frustumCulled = false;
-
-    verticalSectionGroup.add(wall, wallEdges, intersections);
     verticalSectionGroup.visible = !currentExploded;
     updateVerticalClippingPlanes();
   }
@@ -482,7 +515,6 @@ export function createPhaseScene({
     verticalSectionPlane = null;
     verticalSectionFirst = null;
     verticalSectionSecond = null;
-    disposeVerticalSectionVisuals();
     verticalSectionGroup.visible = false;
     updateVerticalClippingPlanes();
   }

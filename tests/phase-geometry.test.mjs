@@ -3,6 +3,9 @@ import test from "node:test";
 import * as THREE from "three";
 
 import {
+  A_VERTEX,
+  B_VERTEX,
+  C_VERTEX,
   layersFor,
   invariantPointPosition,
   phaseAt,
@@ -18,6 +21,7 @@ import {
   referenceLayersFor,
 } from "../app/three/eutecticModels.ts";
 import {
+  extendSectionLineToTriangle,
   makePlaneIntersectionGeometry,
   makeVerticalSectionPlane,
   makeVerticalSectionWallGeometry,
@@ -37,18 +41,51 @@ test("vertical section plane contains P1, P2 and the full temperature direction"
   assert.ok(Math.abs(plane.normal.y) < 1e-12);
 });
 
+test("vertical section wall extends interior P1-P2 to both composition boundaries", () => {
+  const first = positionFromComposition(70, 20, 0);
+  const second = positionFromComposition(20, 70, 0);
+  const plane = makeVerticalSectionPlane(first, second);
+  const span = extendSectionLineToTriangle(
+    first,
+    second,
+    [A_VERTEX, B_VERTEX, C_VERTEX],
+  );
+  const expected = [
+    positionFromComposition(90, 0, 0),
+    positionFromComposition(0, 90, 0),
+  ];
+
+  assert.ok(span.every((point) => Math.abs(plane.distanceToPoint(point)) < 1e-6));
+  assert.ok(
+    expected.every((target) =>
+      span.some((point) => point.distanceTo(target) < 1e-6),
+    ),
+  );
+});
+
 test("vertical laser wall spans P1-P2 from the base to model height", () => {
   const first = new THREE.Vector3(-2, 0, 1);
   const second = new THREE.Vector3(3, 0, -1);
   const geometry = makeVerticalSectionWallGeometry(first, second, TOP_Y);
   const positions = geometry.getAttribute("position");
   assert.equal(positions.count, 4);
+  assert.equal(geometry.getIndex().count, 6);
   const heights = Array.from(
     { length: positions.count },
     (_, index) => positions.getY(index),
   );
   assert.deepEqual(heights.slice(0, 2), [0, 0]);
   assert.ok(heights.slice(2).every((height) => Math.abs(height - TOP_Y) < 1e-5));
+  const normals = geometry.getAttribute("normal");
+  assert.equal(normals.count, 4);
+  for (let index = 0; index < normals.count; index += 1) {
+    const length = Math.hypot(
+      normals.getX(index),
+      normals.getY(index),
+      normals.getZ(index),
+    );
+    assert.ok(Math.abs(length - 1) < 1e-6);
+  }
 });
 
 test("triangle-plane intersections stay on the plane and remove coplanar diagonals", () => {
@@ -65,6 +102,110 @@ test("triangle-plane intersections stay on the plane and remove coplanar diagona
   const coplanarPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
   const boundary = makePlaneIntersectionGeometry([coplanarMesh], coplanarPlane);
   assert.equal(boundary.getAttribute("position").count, 8);
+});
+
+test("curved triangle-plane intersections are rebuilt as dense smooth chains", () => {
+  const coordinates = [-2, -1, 0, 1, 2];
+  const vertices = [];
+  for (const x of coordinates) {
+    const y = 0.12 * x * x;
+    vertices.push(x, y, -1, x, y, 1);
+  }
+  const indices = [];
+  for (let index = 0; index < coordinates.length - 1; index += 1) {
+    const leftNear = index * 2;
+    const leftFar = leftNear + 1;
+    const rightNear = leftNear + 2;
+    const rightFar = leftNear + 3;
+    indices.push(
+      leftNear, rightNear, rightFar,
+      leftNear, rightFar, leftFar,
+    );
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute(
+    "position",
+    new THREE.Float32BufferAttribute(vertices, 3),
+  );
+  geometry.setIndex(indices);
+  const surface = new THREE.Mesh(geometry);
+  const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+  const intersection = makePlaneIntersectionGeometry([surface], plane);
+  const positions = intersection.getAttribute("position");
+
+  // 原始 4 段折线最多只有 8 个端点；样条重采样后应显著加密。
+  assert.ok(positions.count > 16);
+  for (let index = 0; index < positions.count; index += 1) {
+    assert.ok(Math.abs(positions.getZ(index)) < 1e-6);
+  }
+  const xs = Array.from(
+    { length: positions.count },
+    (_, index) => positions.getX(index),
+  );
+  assert.ok(Math.min(...xs) <= -2 + 1e-6);
+  assert.ok(Math.max(...xs) >= 2 - 1e-6);
+});
+
+test("shared curved boundaries weld common nodes and render only one line", () => {
+  const makeCurtain = (coordinates, yAt) => {
+    const vertices = [];
+    for (const x of coordinates) {
+      const y = yAt(x);
+      vertices.push(x, y, -1, x, y, 1);
+    }
+    const indices = [];
+    for (let index = 0; index < coordinates.length - 1; index += 1) {
+      const leftNear = index * 2;
+      const leftFar = leftNear + 1;
+      const rightNear = leftNear + 2;
+      const rightFar = leftNear + 3;
+      indices.push(
+        leftNear, rightNear, rightFar,
+        leftNear, rightFar, leftFar,
+      );
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute(
+      "position",
+      new THREE.Float32BufferAttribute(vertices, 3),
+    );
+    geometry.setIndex(indices);
+    return new THREE.Mesh(geometry);
+  };
+
+  const primary = makeCurtain(
+    [-2, -1, 0, 1, 2],
+    (x) => 0.12 * x * x,
+  );
+  const adjacentRegionCopy = makeCurtain(
+    [-2, -1.5, -0.5, 0.5, 1.5, 2],
+    (x) => 0.12 * x * x + 0.04 * (1 - (x * x) / 4),
+  );
+  const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+  const welded = makePlaneIntersectionGeometry(
+    [primary, adjacentRegionCopy],
+    plane,
+  );
+  const positions = welded.getAttribute("position");
+
+  for (let index = 0; index < positions.count; index += 1) {
+    assert.ok(Math.abs(positions.getZ(index)) < 1e-6);
+  }
+
+  const distinctBoundary = makeCurtain(
+    [-2, -1, 0, 1, 2],
+    (x) => 0.12 * x * x + 0.5 * (1 - (x * x) / 4),
+  );
+  const separated = makePlaneIntersectionGeometry(
+    [primary, distinctBoundary],
+    plane,
+  );
+  const separatedCount = separated.getAttribute("position").count;
+  // 两套不同三角剖分描述的是同一条共享边界，统一拓扑后输出量应只有
+  // 两条真实独立相界的约一半，而不是把两份近似曲线同时画出来。
+  assert.ok(positions.count < separatedCount * 0.75);
+  // 端点相同但中部明显分离的两条真实相界仍必须分别保留。
+  assert.ok(separatedCount > positions.count);
 });
 
 test("composition analysis only returns rendered phase ids", () => {
@@ -90,6 +231,18 @@ test("all three models expose an independently rendered liquid region", () => {
     assert.equal(liquid.length, 1);
     assert.equal(liquid[0].category, "single");
     assert.equal(liquid[0].explode, "up");
+  }
+});
+
+test("both eutectic models distinguish liquid + C from the liquid region", () => {
+  for (const model of ["eutectic", "limited"]) {
+    const layers = layersFor(model);
+    const liquid = layers.find((layer) => layer.id === "liquid");
+    const liquidC = layers.find((layer) => layer.id === "liquid-gamma");
+    assert.ok(liquid);
+    assert.ok(liquidC);
+    assert.equal(liquidC.color, 0x8b5cf6);
+    assert.notEqual(liquidC.color, liquid.color);
   }
 });
 

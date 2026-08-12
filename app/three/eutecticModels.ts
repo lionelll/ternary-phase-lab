@@ -56,7 +56,7 @@ const PHASE_COLORS = {
   solidDark: 0x84cc16,
   two: 0x06b6d4,
   twoBright: 0x10b981,
-  twoDark: 0x2563eb,
+  twoDark: 0x8b5cf6,
   three: 0xfb7185,
   threeAlt: 0xd946ef,
   threeAlt2: 0x9333ea,

@@ -78,7 +78,7 @@ function displayPhaseName(name: string) {
   return name.replace(/\s*\([^)]*\)\s*$/, "").trim();
 }
 
-/** 匀晶与完全不互溶模型的组元在右侧相区列表中使用 A / B / C 表示。 */
+/** 匀晶与完全不互溶模型的组元在右侧相区信息中使用 A / B / C 表示。 */
 function displayPhaseListName(name: string, model: ModelKey) {
   const displayName = displayPhaseName(name);
   if (model === "limited") return displayName;
@@ -91,6 +91,7 @@ function displayPhaseListName(name: string, model: ModelKey) {
 export default function TernaryLab() {
   const canvasHost = useRef<HTMLDivElement>(null);
   const sceneController = useRef<PhaseSceneController | null>(null);
+  const verticalUpdateFrame = useRef<number | null>(null);
 
   const [model, setModel] = useState<ModelKey>("isomorphous");
   const [temperature, setTemperature] = useState(100);
@@ -180,6 +181,48 @@ export default function TernaryLab() {
     sceneController.current?.setPhaseVisibility(phaseVisibility);
   }, [phaseVisibility]);
 
+  // 截面生成后，P1/P2 的数字输入与滑块都进入实时联动模式。
+  // requestAnimationFrame 会把同一帧内的连续拖动事件合并为一次几何重建。
+  useEffect(() => {
+    if (!verticalSectionStatus || !("active" in verticalSectionStatus)) return;
+    const first = verticalPoints.p1;
+    const second = verticalPoints.p2;
+    const values = [
+      first.a,
+      first.b,
+      100 - first.a - first.b,
+      second.a,
+      second.b,
+      100 - second.a - second.b,
+    ];
+    const valid = values.every(
+      (value) => Number.isFinite(value) && value >= 0,
+    );
+    const coincident =
+      Math.abs(first.a - second.a) < 1e-7 &&
+      Math.abs(first.b - second.b) < 1e-7;
+    if (!valid || coincident) return;
+
+    if (verticalUpdateFrame.current !== null) {
+      cancelAnimationFrame(verticalUpdateFrame.current);
+    }
+    verticalUpdateFrame.current = requestAnimationFrame(() => {
+      verticalUpdateFrame.current = null;
+      sceneController.current?.setVerticalSection(
+        positionFromComposition(first.a, first.b, 0),
+        positionFromComposition(second.a, second.b, 0),
+        verticalMode,
+      );
+    });
+
+    return () => {
+      if (verticalUpdateFrame.current !== null) {
+        cancelAnimationFrame(verticalUpdateFrame.current);
+        verticalUpdateFrame.current = null;
+      }
+    };
+  }, [verticalMode, verticalPoints, verticalSectionStatus]);
+
   function applyHighlight(phaseId: string | null) {
     sceneController.current?.setHighlight(phaseId);
   }
@@ -242,8 +285,46 @@ export default function TernaryLab() {
   }
 
   function clearVerticalSection() {
+    if (verticalUpdateFrame.current !== null) {
+      cancelAnimationFrame(verticalUpdateFrame.current);
+      verticalUpdateFrame.current = null;
+    }
     sceneController.current?.clearVerticalSection();
     setVerticalSectionStatus(null);
+  }
+
+  function updateVerticalPoint(
+    pointKey: "p1" | "p2",
+    field: "a" | "b",
+    rawValue: number,
+    keepInsideTriangle: boolean,
+  ) {
+    setVerticalPoints((current) => {
+      if (!keepInsideTriangle) {
+        return {
+          ...current,
+          [pointKey]: {
+            ...current[pointKey],
+            [field]: rawValue,
+          },
+        };
+      }
+
+      const value = Math.min(100, Math.max(0, rawValue));
+      const otherField = field === "a" ? "b" : "a";
+      const otherValue = Math.min(
+        100 - value,
+        Math.max(0, current[pointKey][otherField]),
+      );
+      return {
+        ...current,
+        [pointKey]: {
+          ...current[pointKey],
+          [field]: value,
+          [otherField]: otherValue,
+        },
+      };
+    });
   }
 
   function changeVerticalMode(nextMode: VerticalSectionMode) {
@@ -293,6 +374,10 @@ export default function TernaryLab() {
     const nextFilters = { ...ALL_VISIBLE };
     const nextVisibility = visibilityForModel(model);
     const controller = sceneController.current;
+    if (verticalUpdateFrame.current !== null) {
+      cancelAnimationFrame(verticalUpdateFrame.current);
+      verticalUpdateFrame.current = null;
+    }
     controller?.resetView();
     controller?.setTemperature(100, false);
     controller?.setExploded(false, 100);
@@ -452,15 +537,31 @@ export default function TernaryLab() {
                                 max="100"
                                 value={point[field]}
                                 onChange={(event) =>
-                                  setVerticalPoints((current) => ({
-                                    ...current,
-                                    [pointKey]: {
-                                      ...current[pointKey],
-                                      [field]: Number(event.target.value),
-                                    },
-                                  }))
+                                  updateVerticalPoint(
+                                    pointKey,
+                                    field,
+                                    Number(event.target.value),
+                                    false,
+                                  )
                                 }
                                 aria-label={`点 ${pointIndex + 1} ${field.toUpperCase()} (%)`}
+                              />
+                              <input
+                                className="vertical-composition-slider"
+                                type="range"
+                                min="0"
+                                max="100"
+                                step="1"
+                                value={point[field]}
+                                onInput={(event) =>
+                                  updateVerticalPoint(
+                                    pointKey,
+                                    field,
+                                    Number(event.currentTarget.value),
+                                    true,
+                                  )
+                                }
+                                aria-label={`点 ${pointIndex + 1} ${field.toUpperCase()} 成分滑块`}
                               />
                             </label>
                           ))}
@@ -708,7 +809,7 @@ export default function TernaryLab() {
             <div className="card-title">当前所选相区</div>
             <div className="status-card">
               <strong style={{ color: statusAccent }}>
-                {displayPhaseName(selectedPhase ?? sliceStatus.title)}
+                {displayPhaseListName(selectedPhase ?? sliceStatus.title, model)}
               </strong>
               <p>点击空白处可取消高亮</p>
             </div>

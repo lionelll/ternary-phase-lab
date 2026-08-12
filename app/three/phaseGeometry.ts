@@ -356,7 +356,7 @@ export function layersFor(model: ModelKey): LayerSpec[] {
         id: "liquid-gamma",
         name: "L + γ 两相区 (L + γ)",
         category: "two",
-        color: 0x2563eb,                     // L+γ 两相（twoPhase 压暗）
+        color: 0x8b5cf6,                     // L+γ 两相（紫罗兰，与液相蓝鲜明区分）
         bottom: invariantTop!,
         top: liquidus,
         explode: "center",
@@ -489,7 +489,7 @@ export function layersFor(model: ModelKey): LayerSpec[] {
       id: "liquid-gamma",
       name: "L + γ 两相区 (L + γ)",
       category: "two",
-      color: 0x2563eb,                     // L+γ 两相
+      color: 0x8b5cf6,                     // L+γ 两相（紫罗兰，与液相蓝鲜明区分）
       bottom: invariantTop!,
       top: liquidus,
       explode: "center",
