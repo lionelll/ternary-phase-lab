@@ -93,6 +93,27 @@ test("solidification path starts at liquid and crosses rendered regions from hig
   }
 });
 
+test("eutectic solidification paths include only the four-phase planes crossed by the composition line", () => {
+  for (const model of ["eutectic", "limited"]) {
+    const path = phasePathAtComposition(model, 33, 34);
+    const planeId = `${model}-four-phase-plane`;
+    const planeIndex = path.findIndex((phase) => phase.meshId === planeId);
+    assert.ok(planeIndex > 0, `${model} omitted its crossed four-phase plane`);
+    assert.ok(
+      planeIndex < path.length - 1,
+      `${model} placed its four-phase plane outside the phase sequence`,
+    );
+  }
+
+  const outsideLimitedPlane = phasePathAtComposition("limited", 90, 5);
+  assert.equal(
+    outsideLimitedPlane.some(
+      (phase) => phase.meshId === "limited-four-phase-plane",
+    ),
+    false,
+  );
+});
+
 test("temperature axis keeps the earlier stretch and adds the requested thirty percent without changing composition coordinates", () => {
   assert.equal(TOP_Y, 21.84);
   assert.ok(Math.abs(TEMPERATURE_SPAN - 23.4) < 1e-12);

@@ -72,7 +72,7 @@ function displayPhaseName(name: string) {
   return name.replace(/\s*\([^)]*\)\s*$/, "").trim();
 }
 
-/** 匀晶与完全不互溶模型的组元在右侧相区信息中使用 A / B / C 表示。 */
+/** 所有相区名称统一走同一转换，避免路径、状态卡片与右侧相区列表使用不同符号。 */
 function displayPhaseListName(name: string, model: ModelKey) {
   const displayName = displayPhaseName(name);
   if (model === "limited") return displayName;
@@ -215,10 +215,7 @@ export default function TernaryLab() {
     const path = phasePathAtComposition(model, a, b);
     sceneController.current?.setCompositionPath(
       positionFromComposition(a, b, 0),
-      [
-        ...path.map((phase) => phase.meshId),
-        ...(model === "isomorphous" ? [] : [`${model}-four-phase-plane`]),
-      ],
+      path.map((phase) => phase.meshId),
     );
     setSelectedPhase(null);
     setAnalysis({ c, path, a, b });
@@ -448,7 +445,11 @@ export default function TernaryLab() {
                         </div>
                         <div>
                           <dt>相区路径</dt>
-                          <dd>{analysis.path.map((phase) => displayPhaseName(phase.title)).join(" → ")}</dd>
+                          <dd>
+                            {analysis.path
+                              .map((phase) => displayPhaseListName(phase.title, model))
+                              .join(" → ")}
+                          </dd>
                         </div>
                       </dl>
                     </>
