@@ -980,15 +980,83 @@ export function phaseAt(
   };
 }
 
-/** 固定成分从高温到低温所穿过的相区，顺序即凝固路径顺序。 */
+function compositionInsideTriangle(
+  point: BarycentricPoint,
+  triangle: readonly BarycentricPoint[],
+) {
+  if (triangle.length !== 3) return false;
+  const cross = (
+    first: BarycentricPoint,
+    second: BarycentricPoint,
+    target: BarycentricPoint,
+  ) =>
+    (second[0] - first[0]) * (target[1] - first[1]) -
+    (second[1] - first[1]) * (target[0] - first[0]);
+  const tolerance = 1e-7;
+  const signs = triangle.map((vertex, index) =>
+    cross(vertex, triangle[(index + 1) % triangle.length], point),
+  );
+  const hasNegative = signs.some((value) => value < -tolerance);
+  const hasPositive = signs.some((value) => value > tolerance);
+  return !(hasNegative && hasPositive);
+}
+
+function fourPhaseCrossingAtComposition(
+  model: ModelKey,
+  a: number,
+  b: number,
+) {
+  if (model === "isomorphous") return null;
+  const c = 100 - a - b;
+  if (a < 0 || b < 0 || c < 0) return null;
+
+  const plane = layersFor(model).find((layer) => layer.category === "four");
+  const vertices = plane?.geometry?.vertices;
+  if (!plane || !vertices || vertices.length !== 3) return null;
+  const domain = vertices.map((vertex) => vertex.b);
+  const composition = [a / 100, b / 100, c / 100] as const;
+  if (!compositionInsideTriangle(composition, domain)) return null;
+
+  const referenceTemperature =
+    vertices.reduce((sum, vertex) => sum + vertex.t, 0) / vertices.length;
+  return {
+    phase: {
+      title: plane.name,
+      detail: "Liquid + α + β + γ",
+      meshId: plane.id,
+    } satisfies PhaseResult,
+    temperature:
+      (referenceTemperatureToWorld(referenceTemperature) / TEMPERATURE_SPAN) *
+      100,
+  };
+}
+
+/**
+ * 固定成分从高温到低温所穿过的相区，顺序即凝固路径顺序。
+ * 四相平衡面没有体积，普通逐温度判区无法命中，因此按其真实三角形范围
+ * 计算垂直成分线是否穿面，并在不变温度处插入路径。
+ */
 export function phasePathAtComposition(model: ModelKey, a: number, b: number) {
   const crossed: PhaseResult[] = [];
   const seen = new Set<string>();
-  for (let temperature = 100; temperature >= 0; temperature -= 1) {
-    const phase = phaseAt(model, a, b, temperature);
-    if (seen.has(phase.meshId)) continue;
+  const fourPhaseCrossing = fourPhaseCrossingAtComposition(model, a, b);
+
+  const append = (phase: PhaseResult) => {
+    if (seen.has(phase.meshId)) return;
     seen.add(phase.meshId);
     crossed.push(phase);
+  };
+
+  for (let temperature = 100; temperature >= 0; temperature -= 1) {
+    if (
+      fourPhaseCrossing &&
+      !seen.has(fourPhaseCrossing.phase.meshId) &&
+      temperature < fourPhaseCrossing.temperature
+    ) {
+      append(fourPhaseCrossing.phase);
+    }
+    const phase = phaseAt(model, a, b, temperature);
+    append(phase);
   }
   return crossed;
 }

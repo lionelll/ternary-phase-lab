@@ -19,6 +19,54 @@ import {
 
 const MODELS = ["isomorphous", "eutectic", "limited"];
 
+function triangulateFaces(faces) {
+  return faces.flatMap((face) =>
+    Array.from({ length: Math.max(0, face.length - 2) }, (_, index) => [
+      face[0],
+      face[index + 1],
+      face[index + 2],
+    ]),
+  );
+}
+
+function projectedTriangleWeights(u, v, first, second, third) {
+  const denominator =
+    (second.b[1] - third.b[1]) * (first.b[0] - third.b[0]) +
+    (third.b[0] - second.b[0]) * (first.b[1] - third.b[1]);
+  if (Math.abs(denominator) < 1e-12) return null;
+  const a =
+    ((second.b[1] - third.b[1]) * (u - third.b[0]) +
+      (third.b[0] - second.b[0]) * (v - third.b[1])) /
+    denominator;
+  const b =
+    ((third.b[1] - first.b[1]) * (u - third.b[0]) +
+      (first.b[0] - third.b[0]) * (v - third.b[1])) /
+    denominator;
+  const c = 1 - a - b;
+  return a >= -1e-7 && b >= -1e-7 && c >= -1e-7 ? [a, b, c] : null;
+}
+
+function verticalLineCrossesRegion(geometry, u, v) {
+  const heights = [];
+  for (const [aIndex, bIndex, cIndex] of triangulateFaces(geometry.faces)) {
+    const first = geometry.vertices[aIndex];
+    const second = geometry.vertices[bIndex];
+    const third = geometry.vertices[cIndex];
+    const weights = projectedTriangleWeights(u, v, first, second, third);
+    if (!weights) continue;
+    const height =
+      first.t * weights[0] + second.t * weights[1] + third.t * weights[2];
+    if (!heights.some((existing) => Math.abs(existing - height) < 1e-6)) {
+      heights.push(height);
+    }
+  }
+  heights.sort((first, second) => first - second);
+  return heights.some(
+    (height, index) =>
+      index > 0 && Math.abs(height - heights[index - 1]) > 1e-5,
+  );
+}
+
 test("composition analysis only returns rendered phase ids", () => {
   for (const model of MODELS) {
     const renderedIds = new Set(layersFor(model).map((layer) => layer.id));
@@ -90,6 +138,62 @@ test("solidification path starts at liquid and crosses rendered regions from hig
     assert.equal(path[0].meshId, "liquid");
     assert.ok(path.length >= 2);
     assert.equal(new Set(path.map((phase) => phase.meshId)).size, path.length);
+  }
+});
+
+test("eutectic solidification paths include only the four-phase planes crossed by the composition line", () => {
+  for (const model of ["eutectic", "limited"]) {
+    const path = phasePathAtComposition(model, 33, 34);
+    const planeId = `${model}-four-phase-plane`;
+    const planeIndex = path.findIndex((phase) => phase.meshId === planeId);
+    assert.ok(planeIndex > 0, `${model} omitted its crossed four-phase plane`);
+    assert.ok(
+      planeIndex < path.length - 1,
+      `${model} placed its four-phase plane outside the phase sequence`,
+    );
+  }
+
+  const outsideLimitedPlane = phasePathAtComposition("limited", 90, 5);
+  assert.equal(
+    outsideLimitedPlane.some(
+      (phase) => phase.meshId === "limited-four-phase-plane",
+    ),
+    false,
+  );
+});
+
+test("limited solidification paths never invent a dominant solid solution", () => {
+  assert.deepEqual(
+    phasePathAtComposition("limited", 11, 40).map((phase) => phase.meshId),
+    [
+      "liquid",
+      "liquid-gamma",
+      "limited-three-beta-gamma",
+      "beta-gamma",
+      "limited-solid-three",
+    ],
+  );
+});
+
+test("limited paths only include volumes crossed by the vertical composition line", () => {
+  const layersById = new Map(
+    referenceLayersFor("limited").map((layer) => [layer.id, layer]),
+  );
+  for (let a = 3; a <= 94; a += 7) {
+    for (let b = 3; b <= 97 - a; b += 7) {
+      const u = a / 100;
+      const v = b / 100;
+      for (const phase of phasePathAtComposition("limited", a, b)) {
+        if (phase.meshId === "limited-four-phase-plane") continue;
+        const layer = layersById.get(phase.meshId);
+        assert.ok(layer, `missing reference layer ${phase.meshId}`);
+        assert.equal(
+          verticalLineCrossesRegion(layer.geometry, u, v),
+          true,
+          `A=${a}, B=${b} incorrectly includes ${phase.meshId}`,
+        );
+      }
+    }
   }
 });
 
