@@ -1215,12 +1215,22 @@ function regionContains(
     if (!weights) continue;
     const height =
       first.t * weights.a + second.t * weights.b + third.t * weights.c;
-    if (height <= t + 1e-7) continue;
     if (!intersections.some((existing) => Math.abs(existing - height) < 1e-6)) {
       intersections.push(height);
     }
   }
-  return intersections.length % 2 === 1;
+  intersections.sort((first, second) => first - second);
+
+  // 闭合相区与垂直成分线的交点必须成对出现，分别表示进入和离开相区。
+  // 旧实现只统计当前温度上方交点的奇偶性；当成分线仅擦过相区尖点时会
+  // 得到一个孤立交点，从而把零厚度接触误判成真实穿越并加入凝固路径。
+  for (let index = 0; index + 1 < intersections.length; index += 2) {
+    const bottom = intersections[index];
+    const top = intersections[index + 1];
+    if (top - bottom <= 1e-6) continue;
+    if (t >= bottom - 1e-7 && t <= top + 1e-7) return true;
+  }
+  return false;
 }
 
 export function referenceLiquidus(
@@ -1265,27 +1275,40 @@ export function classifyReferencePoint(
     return MODELS[model].layers.find((item) => item.id === id)!;
   }
 
+  const liquidSolidIds = ["liquid-alpha", "liquid-beta", "liquid-gamma"];
+  const liquidThreePhaseIds = MODELS[model].layers
+    .filter(
+      (item) => item.category === "three" && item.id.includes("three-"),
+    )
+    .map((item) => item.id);
+  const singleSolidIds = MODELS[model].layers
+    .filter((item) => item.category === "single" && item.id !== "liquid")
+    .map((item) => item.id);
+  const twoSolidIds = MODELS[model].layers
+    .filter(
+      (item) => item.category === "two" && !item.id.startsWith("liquid-"),
+    )
+    .map((item) => item.id);
+  const solidThreePhaseIds = MODELS[model].layers
+    .filter(
+      (item) => item.category === "three" && item.id.endsWith("solid-three"),
+    )
+    .map((item) => item.id);
+
+  // 有限互溶模型的单固溶体与两固相区并不全都位于三元共晶温度以下：
+  // 靠近二元边的两固相区可从二元共晶温度一直延伸到三元共晶温度。
+  // 因此高于三元共晶温度时也必须按真实闭合 Mesh 检查这些区域。
+  // 旧逻辑跳过它们后会落入“最大组元”兜底，把 β+γ 等区域误判成 γ 固溶体。
   const priorities =
     t > MODELS[model].invariant
       ? [
-          "liquid-alpha",
-          "liquid-beta",
-          "liquid-gamma",
-          ...MODELS[model].layers
-            .filter((item) => item.category === "three")
-            .map((item) => item.id),
+          ...liquidSolidIds,
+          ...liquidThreePhaseIds,
+          ...singleSolidIds,
+          ...twoSolidIds,
+          ...solidThreePhaseIds,
         ]
-      : [
-          ...MODELS[model].layers
-            .filter((item) => item.category === "single")
-            .map((item) => item.id),
-          ...MODELS[model].layers
-            .filter((item) => item.category === "two")
-            .map((item) => item.id),
-          ...MODELS[model].layers
-            .filter((item) => item.category === "three")
-            .map((item) => item.id),
-        ];
+      : [...singleSolidIds, ...twoSolidIds, ...solidThreePhaseIds];
 
   for (const id of priorities) {
     const current = MODELS[model].layers.find((item) => item.id === id);
